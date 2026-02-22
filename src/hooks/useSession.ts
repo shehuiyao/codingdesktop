@@ -47,6 +47,7 @@ export function useSession(
   const [error, setError] = useState<string | null>(null);
   const [isLive, setIsLive] = useState(false);
   const [workingDir, setWorkingDir] = useState("");
+  const [liveSessionId, setLiveSessionId] = useState<string | null>(null);
   const pendingOutput = useRef("");
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -73,27 +74,31 @@ export function useSession(
 
   // Listen for PTY events when a live session is active
   useEffect(() => {
-    if (!isLive) return;
+    if (!isLive || !liveSessionId) return;
 
+    const currentId = liveSessionId;
     const unlisteners: UnlistenFn[] = [];
 
-    listen<string>("pty-output", (event) => {
-      pendingOutput.current += event.payload;
+    listen<{ id: string; data: string }>("pty-output", (event) => {
+      if (event.payload.id !== currentId) return;
+      pendingOutput.current += event.payload.data;
       if (!flushTimer.current) {
         flushTimer.current = setTimeout(flushOutput, 50);
       }
     }).then((u) => unlisteners.push(u));
 
-    listen("pty-exit", () => {
+    listen<{ id: string }>("pty-exit", (event) => {
+      if (event.payload.id !== currentId) return;
       flushOutput();
       setIsLive(false);
+      setLiveSessionId(null);
     }).then((u) => unlisteners.push(u));
 
     return () => {
       unlisteners.forEach((u) => u());
       if (flushTimer.current) clearTimeout(flushTimer.current);
     };
-  }, [isLive, flushOutput]);
+  }, [isLive, liveSessionId, flushOutput]);
 
   // Load historical session when projectSlug/sessionId change
   useEffect(() => {
@@ -140,12 +145,15 @@ export function useSession(
       setWorkingDir(dir);
       setIsLive(true);
       try {
-        await invoke("start_session", {
+        const id = await invoke<string>("start_session", {
           workingDir: dir,
           args: ["--chat"],
         });
+        setLiveSessionId(id);
+        return id;
       } catch (e) {
         setIsLive(false);
+        setLiveSessionId(null);
         setError(String(e));
         setMessages([
           {
@@ -154,6 +162,7 @@ export function useSession(
             timestamp: Date.now(),
           },
         ]);
+        return undefined;
       }
     },
     [isLive],
@@ -161,13 +170,13 @@ export function useSession(
 
   const sendMessage = useCallback(
     async (text: string) => {
-      if (!isLive || !text.trim()) return;
+      if (!isLive || !liveSessionId || !text.trim()) return;
       setMessages((prev) => [
         ...prev,
         { role: "user", content: text, timestamp: Date.now() },
       ]);
       try {
-        await invoke("send_input", { data: text + "\n" });
+        await invoke("send_input", { sessionId: liveSessionId, data: text + "\n" });
       } catch (e) {
         setMessages((prev) => [
           ...prev,
@@ -179,8 +188,31 @@ export function useSession(
         ]);
       }
     },
-    [isLive],
+    [isLive, liveSessionId],
   );
+
+  const closeSession = useCallback(async () => {
+    if (liveSessionId) {
+      try {
+        await invoke("close_session", { sessionId: liveSessionId });
+      } catch {
+        // ignore errors on close
+      }
+      setLiveSessionId(null);
+      setIsLive(false);
+    }
+  }, [liveSessionId]);
+
+  // Cleanup session on unmount
+  const liveSessionIdRef = useRef(liveSessionId);
+  liveSessionIdRef.current = liveSessionId;
+  useEffect(() => {
+    return () => {
+      if (liveSessionIdRef.current) {
+        invoke("close_session", { sessionId: liveSessionIdRef.current }).catch(() => {});
+      }
+    };
+  }, []);
 
   return {
     messages,
@@ -188,7 +220,9 @@ export function useSession(
     error,
     isLive,
     workingDir,
+    liveSessionId,
     startLiveSession,
     sendMessage,
+    closeSession,
   };
 }

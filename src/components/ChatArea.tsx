@@ -8,6 +8,9 @@ interface ChatAreaProps {
   sessionId: string | null;
   projectSlug: string | null;
   onToggleSidebar: () => void;
+  onWorkingDirChange?: (dir: string) => void;
+  initialDir?: string;
+  onLiveSessionId?: (id: string) => void;
 }
 
 function DirectoryPicker({ onStart }: { onStart: (dir: string) => void }) {
@@ -42,11 +45,27 @@ function DirectoryPicker({ onStart }: { onStart: (dir: string) => void }) {
   );
 }
 
-export default function ChatArea({ sessionId, projectSlug, onToggleSidebar }: ChatAreaProps) {
+export default function ChatArea({ sessionId, projectSlug, onToggleSidebar, onWorkingDirChange, initialDir, onLiveSessionId }: ChatAreaProps) {
   const { messages, loading, error, isLive, workingDir, startLiveSession, sendMessage } =
     useSession(projectSlug, sessionId);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const hasSession = sessionId !== null || isLive;
+  const autoStarted = useRef(false);
+
+  useEffect(() => {
+    if (initialDir && !autoStarted.current && !isLive) {
+      autoStarted.current = true;
+      startLiveSession(initialDir).then((id) => {
+        if (id && onLiveSessionId) onLiveSessionId(id);
+      });
+    }
+  }, [initialDir, isLive, startLiveSession, onLiveSessionId]);
+
+  useEffect(() => {
+    if (workingDir && onWorkingDirChange) {
+      onWorkingDirChange(workingDir);
+    }
+  }, [workingDir, onWorkingDirChange]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });

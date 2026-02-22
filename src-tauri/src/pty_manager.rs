@@ -13,6 +13,7 @@ impl PtySession {
         app: AppHandle,
         working_dir: String,
         args: Vec<String>,
+        session_id: String,
     ) -> Result<Self, String> {
         let pty_system = native_pty_system();
 
@@ -55,15 +56,15 @@ impl PtySession {
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => {
-                        let _ = app_clone.emit("pty-exit", ());
+                        let _ = app_clone.emit("pty-exit", serde_json::json!({"id": session_id}));
                         break;
                     }
                     Ok(n) => {
                         let data = String::from_utf8_lossy(&buf[..n]).to_string();
-                        let _ = app_clone.emit("pty-output", &data);
+                        let _ = app_clone.emit("pty-output", serde_json::json!({"id": session_id, "data": data}));
                     }
                     Err(_) => {
-                        let _ = app_clone.emit("pty-exit", ());
+                        let _ = app_clone.emit("pty-exit", serde_json::json!({"id": session_id}));
                         break;
                     }
                 }
