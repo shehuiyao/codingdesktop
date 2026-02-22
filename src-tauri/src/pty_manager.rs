@@ -26,15 +26,53 @@ impl PtySession {
             })
             .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
-        let mut cmd = CommandBuilder::new("claude");
+        // Resolve claude binary path - .app bundles don't inherit shell PATH
+        let claude_path = which::which("claude")
+            .or_else(|_| {
+                // Try common installation paths
+                let home = dirs::home_dir().unwrap_or_default();
+                let candidates = [
+                    home.join(".local/bin/claude"),
+                    home.join(".nvm/versions/node").join("**").join("bin/claude"),
+                    std::path::PathBuf::from("/usr/local/bin/claude"),
+                    std::path::PathBuf::from("/opt/homebrew/bin/claude"),
+                ];
+                for candidate in &candidates {
+                    if candidate.exists() {
+                        return Ok(candidate.clone());
+                    }
+                }
+                Err(which::Error::CannotFindBinaryPath)
+            })
+            .map_err(|_| "Cannot find 'claude' binary. Make sure Claude Code CLI is installed.".to_string())?;
+
+        let mut cmd = CommandBuilder::new(claude_path);
         for arg in &args {
             cmd.arg(arg);
         }
         cmd.cwd(&working_dir);
 
-        for (key, value) in std::env::vars() {
-            cmd.env(key, value);
+        // Inherit environment and ensure PATH includes common binary locations
+        let home = dirs::home_dir().unwrap_or_default();
+        let mut path_val = std::env::var("PATH").unwrap_or_default();
+        let extra_paths = [
+            home.join(".local/bin").to_string_lossy().to_string(),
+            home.join(".nvm/versions/node").to_string_lossy().to_string(),
+            "/usr/local/bin".to_string(),
+            "/opt/homebrew/bin".to_string(),
+        ];
+        for p in &extra_paths {
+            if !path_val.contains(p.as_str()) {
+                path_val = format!("{}:{}", p, path_val);
+            }
         }
+
+        for (key, value) in std::env::vars() {
+            cmd.env(key.clone(), value);
+        }
+        cmd.env("PATH", &path_val);
+        // Ensure HOME is set for claude to find its config
+        cmd.env("HOME", home.to_string_lossy().to_string());
 
         let _child = pair
             .slave

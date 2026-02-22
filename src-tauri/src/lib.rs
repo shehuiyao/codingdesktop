@@ -113,7 +113,17 @@ fn list_directory(path: String) -> Result<Vec<FileEntry>, String> {
 
 #[tauri::command]
 fn check_claude_installed() -> Result<bool, String> {
-    Ok(which::which("claude").is_ok())
+    if which::which("claude").is_ok() {
+        return Ok(true);
+    }
+    // Check common installation paths when not in shell environment
+    let home = dirs::home_dir().unwrap_or_default();
+    let candidates = [
+        home.join(".local/bin/claude"),
+        std::path::PathBuf::from("/usr/local/bin/claude"),
+        std::path::PathBuf::from("/opt/homebrew/bin/claude"),
+    ];
+    Ok(candidates.iter().any(|p| p.exists()))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
