@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, type KeyboardEvent } from "react";
+import { useEffect, useRef } from "react";
 import { useSession } from "../hooks/useSession";
+import { open } from "@tauri-apps/plugin-dialog";
 import MessageBubble from "./MessageBubble";
 import InputBar from "./InputBar";
 
@@ -10,14 +11,16 @@ interface ChatAreaProps {
 }
 
 function DirectoryPicker({ onStart }: { onStart: (dir: string) => void }) {
-  const [dir, setDir] = useState("");
-
-  function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter" && dir.trim()) {
-      e.preventDefault();
-      onStart(dir.trim());
+  const handlePickFolder = async () => {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "Select project directory",
+    });
+    if (selected && typeof selected === "string") {
+      onStart(selected);
     }
-  }
+  };
 
   return (
     <div className="flex-1 flex items-center justify-center">
@@ -26,24 +29,13 @@ function DirectoryPicker({ onStart }: { onStart: (dir: string) => void }) {
           Claude Code Desktop
         </div>
         <div className="text-sm mb-6">
-          Enter a working directory to start a new session
-        </div>
-        <div className="flex items-center gap-2 mb-3">
-          <input
-            type="text"
-            value={dir}
-            onChange={(e) => setDir(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="/path/to/project"
-            className="flex-1 bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded px-3 py-2 text-sm text-[var(--text-primary)] placeholder-[var(--text-secondary)] outline-none focus:border-[var(--accent-blue)]"
-          />
+          Select a project folder to start a new session
         </div>
         <button
-          onClick={() => dir.trim() && onStart(dir.trim())}
-          disabled={!dir.trim()}
-          className="w-full py-2 px-4 text-sm bg-[var(--accent-blue)] text-white rounded hover:opacity-90 transition-opacity disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+          onClick={handlePickFolder}
+          className="w-full py-3 px-4 text-sm bg-[var(--accent-blue)] text-white rounded hover:opacity-90 transition-opacity cursor-pointer"
         >
-          Start Session
+          Choose Folder...
         </button>
       </div>
     </div>

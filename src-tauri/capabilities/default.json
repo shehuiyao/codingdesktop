@@ -5,6 +5,7 @@
   "permissions": [
     "core:default",
     "shell:default",
+    "dialog:default",
     "core:event:default",
     "core:event:allow-listen",
     "core:event:allow-emit"

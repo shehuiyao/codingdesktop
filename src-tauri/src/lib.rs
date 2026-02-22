@@ -55,6 +55,7 @@ fn check_claude_installed() -> Result<bool, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             session: Mutex::new(None),
         })
