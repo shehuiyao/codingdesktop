@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useHistory, type HistoryEntry } from "../hooks/useHistory";
 
 interface SidebarProps {
@@ -14,6 +15,21 @@ function sessionLabel(entry: HistoryEntry): string {
 
 export default function Sidebar({ activeSessionId, onSelectSession, onNewSession }: SidebarProps) {
   const { history, loading, error, refetch } = useHistory();
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredHistory = searchQuery.trim()
+    ? history
+        .map((group) => ({
+          ...group,
+          entries: group.entries.filter((entry) => {
+            const query = searchQuery.toLowerCase();
+            const display = (entry.display || "").toLowerCase();
+            const project = (entry.project || "").toLowerCase();
+            return display.includes(query) || project.includes(query);
+          }),
+        }))
+        .filter((group) => group.entries.length > 0)
+    : history;
 
   return (
     <div className="w-60 border-r border-[var(--border-color)] flex flex-col bg-[var(--bg-secondary)] overflow-hidden">
@@ -24,6 +40,25 @@ export default function Sidebar({ activeSessionId, onSelectSession, onNewSession
         >
           + New Session
         </button>
+      </div>
+      <div className="px-3 pb-2 pt-2">
+        <div className="relative">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search sessions..."
+            className="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded px-3 py-1.5 text-xs text-[var(--text-primary)] placeholder-[var(--text-secondary)] outline-none focus:border-[var(--accent-blue)]"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-xs cursor-pointer"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto p-2">
         {loading && (
@@ -43,7 +78,10 @@ export default function Sidebar({ activeSessionId, onSelectSession, onNewSession
         {!loading && !error && history.length === 0 && (
           <div className="text-xs text-[var(--text-secondary)] p-2">No sessions yet</div>
         )}
-        {history.map((group) => (
+        {!loading && !error && history.length > 0 && filteredHistory.length === 0 && (
+          <div className="text-xs text-[var(--text-secondary)] p-2">No matching sessions</div>
+        )}
+        {filteredHistory.map((group) => (
           <div key={group.label} className="mb-2">
             <div className="text-[10px] uppercase tracking-wider text-[var(--text-secondary)] px-2 py-1">
               {group.label}
