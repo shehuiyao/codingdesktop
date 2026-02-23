@@ -1,127 +1,110 @@
-import { useEffect, useRef } from "react";
-import { useSession } from "../hooks/useSession";
-import { open } from "@tauri-apps/plugin-dialog";
+import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import MessageBubble from "./MessageBubble";
-import InputBar from "./InputBar";
+
+interface SessionMessage {
+  role?: string;
+  content?: unknown;
+}
+
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  timestamp: number;
+}
+
+function parseSessionMessages(raw: SessionMessage[]): ChatMessage[] {
+  const result: ChatMessage[] = [];
+  for (const msg of raw) {
+    if (!msg.role || (msg.role !== "user" && msg.role !== "assistant")) continue;
+    let text = "";
+    if (typeof msg.content === "string") {
+      text = msg.content;
+    } else if (Array.isArray(msg.content)) {
+      text = (msg.content as { type?: string; text?: string }[])
+        .filter((b) => b.type === "text" && b.text)
+        .map((b) => b.text!)
+        .join("\n");
+    }
+    if (text) {
+      result.push({
+        role: msg.role as "user" | "assistant",
+        content: text,
+        timestamp: Date.now(),
+      });
+    }
+  }
+  return result;
+}
 
 interface ChatAreaProps {
   sessionId: string | null;
   projectSlug: string | null;
-  onToggleSidebar: () => void;
-  onWorkingDirChange?: (dir: string) => void;
-  initialDir?: string;
-  onLiveSessionId?: (id: string) => void;
 }
 
-function DirectoryPicker({ onStart }: { onStart: (dir: string) => void }) {
-  const handlePickFolder = async () => {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: "Select project directory",
-    });
-    if (selected && typeof selected === "string") {
-      onStart(selected);
-    }
-  };
-
-  return (
-    <div className="flex-1 flex items-center justify-center">
-      <div className="text-center text-[var(--text-secondary)] max-w-sm w-full px-4">
-        <div className="text-lg mb-2 text-[var(--text-primary)]">
-          Claude Code Desktop
-        </div>
-        <div className="text-sm mb-6">
-          Select a project folder to start a new session
-        </div>
-        <button
-          onClick={handlePickFolder}
-          className="w-full py-3 px-4 text-sm bg-[var(--accent-blue)] text-white rounded hover:opacity-90 transition-opacity cursor-pointer"
-        >
-          Choose Folder...
-        </button>
-      </div>
-    </div>
-  );
-}
-
-export default function ChatArea({ sessionId, projectSlug, onToggleSidebar, onWorkingDirChange, initialDir, onLiveSessionId }: ChatAreaProps) {
-  const { messages, loading, error, isLive, workingDir, startLiveSession, sendMessage } =
-    useSession(projectSlug, sessionId);
+export default function ChatArea({ sessionId, projectSlug }: ChatAreaProps) {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const hasSession = sessionId !== null || isLive;
-  const autoStarted = useRef(false);
 
   useEffect(() => {
-    if (initialDir && !autoStarted.current && !isLive) {
-      autoStarted.current = true;
-      startLiveSession(initialDir).then((id) => {
-        if (id && onLiveSessionId) onLiveSessionId(id);
+    if (!projectSlug || !sessionId) {
+      setMessages([]);
+      setError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    invoke<SessionMessage[]>("get_session", { projectSlug, sessionId })
+      .then((data) => {
+        if (!cancelled) setMessages(parseSessionMessages(data));
+      })
+      .catch((err) => {
+        if (!cancelled) setError(String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
-    }
-  }, [initialDir, isLive, startLiveSession, onLiveSessionId]);
 
-  useEffect(() => {
-    if (workingDir && onWorkingDirChange) {
-      onWorkingDirChange(workingDir);
-    }
-  }, [workingDir, onWorkingDirChange]);
+    return () => { cancelled = true; };
+  }, [projectSlug, sessionId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const headerLabel = isLive
-    ? workingDir || "live session"
-    : sessionId
-      ? `session: ${sessionId.slice(0, 8)}...`
-      : "no session";
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <span className="text-sm text-[var(--text-secondary)]">Loading session...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <span className="text-sm text-[var(--accent-red)]">{error}</span>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Header bar */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-color)] bg-[var(--bg-secondary)]">
-        <button
-          onClick={onToggleSidebar}
-          className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-sm cursor-pointer"
-        >
-          [=]
-        </button>
-        <span className="text-xs text-[var(--text-secondary)] truncate">
-          {headerLabel}
-        </span>
-        {isLive && (
-          <span className="ml-auto text-xs text-[var(--accent-green)]">live</span>
-        )}
-      </div>
-
-      {/* Content area */}
-      {!hasSession ? (
-        <DirectoryPicker onStart={startLiveSession} />
-      ) : loading ? (
-        <div className="flex-1 flex items-center justify-center">
-          <span className="text-sm text-[var(--text-secondary)]">Loading session...</span>
-        </div>
-      ) : error && messages.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center">
-          <span className="text-sm text-[var(--accent-red)]">{error}</span>
+    <div className="flex-1 overflow-y-auto p-4">
+      {messages.length === 0 ? (
+        <div className="text-center text-[var(--text-secondary)] text-sm py-4">
+          No messages in this session
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto p-4">
-          {!loading && messages.length === 0 && !error && (
-            <div className="text-center text-[var(--text-secondary)] text-sm py-4">
-              {isLive ? "Session started. Waiting for output..." : "No messages in this session"}
-            </div>
-          )}
-          {messages.map((msg, i) => (
-            <MessageBubble key={`${msg.timestamp}-${i}`} message={msg} />
-          ))}
-          <div ref={messagesEndRef} />
-        </div>
+        messages.map((msg, i) => (
+          <MessageBubble key={`${msg.timestamp}-${i}`} message={msg} />
+        ))
       )}
-
-      {/* Input bar */}
-      <InputBar disabled={!isLive} onSend={sendMessage} />
+      <div ref={messagesEndRef} />
     </div>
   );
 }

@@ -46,10 +46,12 @@ export function useSession(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLive, setIsLive] = useState(false);
+  const [responding, setResponding] = useState(false);
   const [workingDir, setWorkingDir] = useState("");
   const [liveSessionId, setLiveSessionId] = useState<string | null>(null);
   const pendingOutput = useRef("");
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
 
   const flushOutput = useCallback(() => {
     if (pendingOutput.current) {
@@ -72,35 +74,33 @@ export function useSession(
     flushTimer.current = null;
   }, []);
 
-  // Listen for PTY events when a live session is active
+  // Register event listeners on mount
   useEffect(() => {
-    if (!isLive || !liveSessionId) return;
-
-    const currentId = liveSessionId;
     const unlisteners: UnlistenFn[] = [];
 
-    listen<{ id: string; data: string }>("pty-output", (event) => {
-      if (event.payload.id !== currentId) return;
+    listen<{ id: string; data: string }>("message-chunk", (event) => {
+      const currentId = sessionIdRef.current;
+      if (!currentId || event.payload.id !== currentId) return;
       pendingOutput.current += event.payload.data;
       if (!flushTimer.current) {
         flushTimer.current = setTimeout(flushOutput, 50);
       }
     }).then((u) => unlisteners.push(u));
 
-    listen<{ id: string }>("pty-exit", (event) => {
-      if (event.payload.id !== currentId) return;
+    listen<{ id: string }>("message-done", (event) => {
+      const currentId = sessionIdRef.current;
+      if (!currentId || event.payload.id !== currentId) return;
       flushOutput();
-      setIsLive(false);
-      setLiveSessionId(null);
+      setResponding(false);
     }).then((u) => unlisteners.push(u));
 
     return () => {
       unlisteners.forEach((u) => u());
       if (flushTimer.current) clearTimeout(flushTimer.current);
     };
-  }, [isLive, liveSessionId, flushOutput]);
+  }, [flushOutput]);
 
-  // Load historical session when projectSlug/sessionId change
+  // Load historical session
   useEffect(() => {
     if (!projectSlug || !sessionId) {
       if (!isLive) {
@@ -145,15 +145,14 @@ export function useSession(
       setWorkingDir(dir);
       setIsLive(true);
       try {
-        const id = await invoke<string>("start_session", {
-          workingDir: dir,
-          args: ["--chat"],
-        });
+        const id = await invoke<string>("start_session", { workingDir: dir });
         setLiveSessionId(id);
+        sessionIdRef.current = id;
         return id;
       } catch (e) {
         setIsLive(false);
         setLiveSessionId(null);
+        sessionIdRef.current = null;
         setError(String(e));
         setMessages([
           {
@@ -170,14 +169,19 @@ export function useSession(
 
   const sendMessage = useCallback(
     async (text: string) => {
-      if (!isLive || !liveSessionId || !text.trim()) return;
+      if (!isLive || !liveSessionId || !text.trim() || responding) return;
       setMessages((prev) => [
         ...prev,
         { role: "user", content: text, timestamp: Date.now() },
       ]);
+      setResponding(true);
       try {
-        await invoke("send_input", { sessionId: liveSessionId, data: text + "\n" });
+        await invoke("send_message", {
+          sessionId: liveSessionId,
+          message: text,
+        });
       } catch (e) {
+        setResponding(false);
         setMessages((prev) => [
           ...prev,
           {
@@ -188,7 +192,7 @@ export function useSession(
         ]);
       }
     },
-    [isLive, liveSessionId],
+    [isLive, liveSessionId, responding],
   );
 
   const closeSession = useCallback(async () => {
@@ -196,20 +200,21 @@ export function useSession(
       try {
         await invoke("close_session", { sessionId: liveSessionId });
       } catch {
-        // ignore errors on close
+        // ignore
       }
       setLiveSessionId(null);
+      sessionIdRef.current = null;
       setIsLive(false);
     }
   }, [liveSessionId]);
 
-  // Cleanup session on unmount
-  const liveSessionIdRef = useRef(liveSessionId);
-  liveSessionIdRef.current = liveSessionId;
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (liveSessionIdRef.current) {
-        invoke("close_session", { sessionId: liveSessionIdRef.current }).catch(() => {});
+      if (sessionIdRef.current) {
+        invoke("close_session", { sessionId: sessionIdRef.current }).catch(
+          () => {},
+        );
       }
     };
   }, []);
@@ -219,6 +224,7 @@ export function useSession(
     loading,
     error,
     isLive,
+    responding,
     workingDir,
     liveSessionId,
     startLiveSession,

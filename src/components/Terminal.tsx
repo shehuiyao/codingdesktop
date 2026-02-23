@@ -28,8 +28,8 @@ export default function TerminalPanel() {
     fitAddon.fit();
     termRef.current = term;
 
-    const unlisten = listen<string>("pty-output", (event) => {
-      term.write(event.payload);
+    const unlisten = listen<{ id: string; data: string }>("pty-output", (event) => {
+      term.write(event.payload.data);
     });
 
     const observer = new ResizeObserver(() => fitAddon.fit());

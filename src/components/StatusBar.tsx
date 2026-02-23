@@ -11,22 +11,24 @@ export default function StatusBar() {
   }, []);
 
   return (
-    <div className="flex items-center justify-between px-3 py-1 text-xs border-t border-[var(--border-color)] bg-[var(--bg-secondary)] text-[var(--text-secondary)]">
-      <div className="flex items-center gap-3">
-        <span>
-          {claudeInstalled === null
-            ? "claude: checking..."
-            : claudeInstalled
-              ? "claude: installed"
-              : "claude: not found"}
-        </span>
-        <span
-          className={`inline-block w-1.5 h-1.5 rounded-full ${
-            claudeInstalled ? "bg-[var(--accent-green)]" : claudeInstalled === false ? "bg-[var(--accent-red)]" : "bg-[var(--text-secondary)]"
-          }`}
-        />
+    <div className="flex-1 border-t border-[var(--border-subtle)] bg-[var(--bg-secondary)] text-[var(--text-muted)]">
+      <div className="flex items-center justify-between px-3 py-0.5 text-[10px]">
+        <div className="flex items-center gap-2">
+          <span
+            className={`inline-block w-1.5 h-1.5 rounded-full ${
+              claudeInstalled ? "bg-[var(--accent-green)]" : claudeInstalled === false ? "bg-[var(--accent-red)]" : "bg-[var(--text-secondary)]"
+            }`}
+          />
+          <span>
+            {claudeInstalled === null
+              ? "Checking CLI..."
+              : claudeInstalled
+                ? "CLI Ready"
+                : "CLI Not Found"}
+          </span>
+        </div>
+        <div className="text-[var(--text-muted)]">v0.4.4</div>
       </div>
-      <div>Claude Code Desktop v0.1.0</div>
     </div>
   );
 }

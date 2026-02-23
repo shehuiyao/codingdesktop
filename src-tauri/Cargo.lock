@@ -302,6 +302,7 @@ name = "claude-desktop"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "libc",
  "portable-pty",
  "serde",
  "serde_json",

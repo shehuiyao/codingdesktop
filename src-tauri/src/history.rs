@@ -1,17 +1,50 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
+/// Deserialize a timestamp that may be a JSON number (epoch ms) or a string.
+/// Always produces a string suitable for JavaScript's `new Date()`.
+fn deserialize_timestamp<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let val: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    match val {
+        Some(serde_json::Value::Number(n)) => Ok(Some(n.to_string())),
+        Some(serde_json::Value::String(s)) => Ok(Some(s)),
+        _ => Ok(None),
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HistoryEntry {
     pub display: Option<String>,
+    #[serde(deserialize_with = "deserialize_timestamp", default)]
     pub timestamp: Option<String>,
     pub project: Option<String>,
     #[serde(rename = "sessionId")]
     pub session_id: Option<String>,
 }
 
+/// The actual message payload nested inside a session JSONL line.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MessagePayload {
+    pub role: Option<String>,
+    pub content: Option<serde_json::Value>,
+}
+
+/// A single line in a session JSONL file.
+/// The real format has `type`, `message`, etc. at the top level.
+#[derive(Debug, Deserialize)]
+struct RawSessionLine {
+    #[serde(rename = "type")]
+    line_type: Option<String>,
+    message: Option<MessagePayload>,
+}
+
+/// What we return to the frontend.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SessionMessage {
     pub role: Option<String>,
@@ -22,6 +55,15 @@ pub struct SessionMessage {
 
 fn claude_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude"))
+}
+
+/// Convert a project path like `/Users/foo/bar` to its slug `-Users-foo-bar`.
+/// Claude Code replaces `/` and non-ASCII characters (e.g. Chinese) with `-`.
+fn project_path_to_slug(project_path: &str) -> String {
+    project_path
+        .chars()
+        .map(|c| if c == '/' || !c.is_ascii() { '-' } else { c })
+        .collect()
 }
 
 pub fn read_history() -> Result<Vec<HistoryEntry>, String> {
@@ -36,7 +78,10 @@ pub fn read_history() -> Result<Vec<HistoryEntry>, String> {
     let file = fs::File::open(&path).map_err(|e| format!("Failed to open history: {}", e))?;
     let reader = BufReader::new(file);
     let mut entries = Vec::new();
+    let mut seen_sessions = HashSet::new();
 
+    // Read all entries first
+    let mut all_entries = Vec::new();
     for line in reader.lines() {
         let line = line.map_err(|e| format!("Failed to read line: {}", e))?;
         let trimmed = line.trim();
@@ -44,19 +89,45 @@ pub fn read_history() -> Result<Vec<HistoryEntry>, String> {
             continue;
         }
         match serde_json::from_str::<HistoryEntry>(trimmed) {
-            Ok(entry) => entries.push(entry),
+            Ok(entry) => all_entries.push(entry),
             Err(_) => continue,
         }
     }
+
+    // Deduplicate: iterate in reverse (latest entries first) and keep only the first occurrence of each sessionId
+    for entry in all_entries.into_iter().rev() {
+        if let Some(ref sid) = entry.session_id {
+            if seen_sessions.contains(sid) {
+                continue;
+            }
+            seen_sessions.insert(sid.clone());
+        }
+        entries.push(entry);
+    }
+
+    // Reverse back so the order is preserved (oldest first; the frontend sorts by timestamp anyway)
+    entries.reverse();
+
     Ok(entries)
 }
 
 pub fn read_session(project_slug: &str, session_id: &str) -> Result<Vec<SessionMessage>, String> {
-    let path = claude_dir()
+    // The project_slug from the frontend may be a full path like "/Users/foo/bar"
+    // or already a slug like "-Users-foo-bar". Try slug conversion first, then fall back.
+    let base = claude_dir()
         .ok_or("Cannot find home directory")?
-        .join("projects")
-        .join(project_slug)
-        .join(format!("{}.jsonl", session_id));
+        .join("projects");
+
+    let session_file = format!("{}.jsonl", session_id);
+
+    // Try the slug derived from the project path
+    let slug = project_path_to_slug(project_slug);
+    let mut path = base.join(&slug).join(&session_file);
+
+    // If that doesn't exist, try using the value as-is (it may already be a slug)
+    if !path.exists() {
+        path = base.join(project_slug).join(&session_file);
+    }
 
     if !path.exists() {
         return Err(format!("Session file not found: {:?}", path));
@@ -72,9 +143,24 @@ pub fn read_session(project_slug: &str, session_id: &str) -> Result<Vec<SessionM
         if trimmed.is_empty() {
             continue;
         }
-        match serde_json::from_str::<SessionMessage>(trimmed) {
-            Ok(msg) => messages.push(msg),
+        let raw: RawSessionLine = match serde_json::from_str(trimmed) {
+            Ok(r) => r,
             Err(_) => continue,
+        };
+
+        let line_type = raw.line_type.as_deref().unwrap_or("");
+
+        // Only include user and assistant messages
+        if line_type != "user" && line_type != "assistant" {
+            continue;
+        }
+
+        if let Some(msg) = raw.message {
+            messages.push(SessionMessage {
+                role: msg.role,
+                content: msg.content,
+                msg_type: Some(line_type.to_string()),
+            });
         }
     }
     Ok(messages)

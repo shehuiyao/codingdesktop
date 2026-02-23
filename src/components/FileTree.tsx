@@ -37,10 +37,10 @@ function TreeNode({ entry }: TreeNodeProps) {
     <div>
       <div
         onClick={toggle}
-        className={`flex items-center gap-1 px-2 py-0.5 text-xs truncate ${
+        className={`flex items-center gap-1.5 px-2 py-0.5 text-xs truncate rounded-sm transition-colors duration-100 ${
           entry.is_dir
-            ? "text-[var(--text-primary)] cursor-pointer hover:bg-[var(--bg-tertiary)]"
-            : "text-[var(--text-secondary)]"
+            ? "text-[var(--text-primary)] cursor-pointer hover:bg-[var(--bg-hover)]"
+            : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
         }`}
       >
         {entry.is_dir ? (
@@ -81,9 +81,9 @@ export default function FileTree({ rootPath }: FileTreeProps) {
   }, [rootPath]);
 
   return (
-    <div className="w-56 border-l border-[var(--border-color)] bg-[var(--bg-secondary)] flex flex-col overflow-hidden">
-      <div className="px-3 py-2 text-xs font-semibold text-[var(--text-secondary)] border-b border-[var(--border-color)] uppercase tracking-wide">
-        Files
+    <div className="w-56 border-l border-[var(--border-subtle)] bg-[var(--bg-secondary)] flex flex-col overflow-hidden">
+      <div className="px-3 py-2 text-[10px] font-medium text-[var(--text-muted)] border-b border-[var(--border-subtle)] uppercase tracking-wider">
+        Explorer
       </div>
       <div className="flex-1 overflow-y-auto py-1">
         {error ? (

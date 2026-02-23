@@ -73,6 +73,8 @@ impl PtySession {
         cmd.env("PATH", &path_val);
         // Ensure HOME is set for claude to find its config
         cmd.env("HOME", home.to_string_lossy().to_string());
+        // Set TERM so Claude CLI recognizes the terminal capabilities
+        cmd.env("TERM", "xterm-256color");
 
         let _child = pair
             .slave

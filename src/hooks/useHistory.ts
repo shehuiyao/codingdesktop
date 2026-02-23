@@ -13,54 +13,39 @@ export interface GroupedHistory {
   entries: HistoryEntry[];
 }
 
-function groupByDate(entries: HistoryEntry[]): GroupedHistory[] {
-  const now = new Date();
-  const todayStr = now.toDateString();
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toDateString();
-  const sevenDaysAgo = new Date(now);
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-  const thirtyDaysAgo = new Date(now);
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+/** Parse a timestamp that may be an epoch-ms number string or an ISO date string. */
+function parseTimestamp(ts: string): number {
+  const num = Number(ts);
+  if (!isNaN(num) && num > 1e12) return num; // epoch milliseconds
+  const d = new Date(ts);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
 
+/** Extract a short project name from a full path like "/Users/foo/my-project" → "my-project" */
+function projectLabel(project: string): string {
+  const parts = project.replace(/\/+$/, "").split("/");
+  return parts[parts.length - 1] || project;
+}
+
+function groupByProject(entries: HistoryEntry[]): GroupedHistory[] {
   const groups: Record<string, HistoryEntry[]> = {};
   const order: string[] = [];
 
-  function addToGroup(label: string, entry: HistoryEntry) {
+  // Sort entries by timestamp descending (most recent first)
+  const sorted = [...entries].sort((a, b) => {
+    const ta = a.timestamp ? parseTimestamp(a.timestamp) : 0;
+    const tb = b.timestamp ? parseTimestamp(b.timestamp) : 0;
+    return tb - ta;
+  });
+
+  for (const entry of sorted) {
+    const project = entry.project || "Unknown";
+    const label = projectLabel(project);
     if (!groups[label]) {
       groups[label] = [];
       order.push(label);
     }
     groups[label].push(entry);
-  }
-
-  // Sort entries by timestamp descending (most recent first)
-  const sorted = [...entries].sort((a, b) => {
-    const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0;
-    const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0;
-    return tb - ta;
-  });
-
-  for (const entry of sorted) {
-    if (!entry.timestamp) {
-      addToGroup("Older", entry);
-      continue;
-    }
-    const date = new Date(entry.timestamp);
-    const dateStr = date.toDateString();
-
-    if (dateStr === todayStr) {
-      addToGroup("Today", entry);
-    } else if (dateStr === yesterdayStr) {
-      addToGroup("Yesterday", entry);
-    } else if (date >= sevenDaysAgo) {
-      addToGroup("Past 7 Days", entry);
-    } else if (date >= thirtyDaysAgo) {
-      addToGroup("Past 30 Days", entry);
-    } else {
-      addToGroup("Older", entry);
-    }
   }
 
   return order.map((label) => ({ label, entries: groups[label] }));
@@ -76,7 +61,7 @@ export function useHistory() {
     setError(null);
     try {
       const entries = await invoke<HistoryEntry[]>("get_history");
-      setHistory(groupByDate(entries));
+      setHistory(groupByProject(entries));
     } catch (err) {
       setError(String(err));
     } finally {
