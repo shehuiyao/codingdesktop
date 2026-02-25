@@ -443,7 +443,7 @@ fn get_commit_history(path: String, count: Option<u32>) -> Result<Vec<CommitEntr
 
 // ---- Update check ----
 
-const APP_VERSION: &str = "0.5.8";
+const APP_VERSION: &str = "0.6.0";
 
 #[derive(serde::Serialize)]
 struct UpdateInfo {
