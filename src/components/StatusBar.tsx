@@ -117,7 +117,7 @@ export default function StatusBar() {
     <div className="flex-1 border-t border-[var(--border-subtle)] bg-[var(--bg-secondary)] text-[var(--text-muted)]">
       <div className="flex items-center justify-between px-3 py-0.5 text-[10px]">
         <div className="flex items-center gap-3">
-          <span className="text-[var(--text-muted)]">v0.5.3</span>
+          <span className="text-[var(--text-muted)]">v0.5.4</span>
           <button
             onClick={handleCheckUpdate}
             disabled={updateStatus === "checking" || updateStatus === "downloading"}
