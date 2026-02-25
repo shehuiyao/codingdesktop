@@ -252,16 +252,23 @@ export default function LiveTerminal({ workingDir, yolo, tool, onSessionStarted,
       });
       unlisteners.push(() => themeObserver.disconnect());
 
-      // Handle resize
+      // Handle resize — debounce to avoid fitting with stale dimensions during tab switch
+      let resizeTimer: ReturnType<typeof setTimeout> | null = null;
       observer = new ResizeObserver(() => {
-        fitAddon!.fit();
-        if (sessionIdRef.current) {
-          const cols = term!.cols;
-          const rows = term!.rows;
-          invoke("resize_session", { sessionId: sessionIdRef.current, rows, cols }).catch(() => {});
-        }
+        if (resizeTimer) clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          const el = containerRef.current;
+          if (!el || el.offsetWidth === 0 || el.offsetHeight === 0) return;
+          fitAddon!.fit();
+          if (sessionIdRef.current) {
+            const cols = term!.cols;
+            const rows = term!.rows;
+            invoke("resize_session", { sessionId: sessionIdRef.current, rows, cols }).catch(() => {});
+          }
+        }, 50);
       });
       observer.observe(containerRef.current!);
+      unlisteners.push(() => { if (resizeTimer) clearTimeout(resizeTimer); });
     };
 
     setup();
