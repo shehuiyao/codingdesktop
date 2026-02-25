@@ -1,37 +1,16 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { check } from "@tauri-apps/plugin-updater";
 import { useTheme } from "../hooks/useTheme";
 
-interface UpdateInfo {
-  current_version: string;
-  latest_version: string;
-  update_available: boolean;
-  download_url: string;
-}
-
-type UpdateStatus = "idle" | "checking" | "up-to-date" | "update-available" | "downloading" | "installing" | "error";
+type UpdateStatus = "idle" | "checking" | "up-to-date" | "update-available" | "downloading" | "installing" | "done" | "error";
 
 export default function StatusBar() {
   const { mode, setMode } = useTheme();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
   const [latestVersion, setLatestVersion] = useState("");
-  const [downloadUrl, setDownloadUrl] = useState("");
-
-  // Listen for download progress events from backend
-  useEffect(() => {
-    const unlisten = listen<string>("update-progress", (event) => {
-      const msg = event.payload;
-      if (msg === "Downloading...") {
-        setUpdateStatus("downloading");
-      } else if (msg === "Opening installer...") {
-        setUpdateStatus("installing");
-      } else if (msg === "done") {
-        setUpdateStatus("idle");
-      }
-    });
-    return () => { unlisten.then((fn) => fn()); };
-  }, []);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [updateRef, setUpdateRef] = useState<Awaited<ReturnType<typeof check>> | null>(null);
 
   const cycleTheme = () => {
     setMode((prev) => {
@@ -43,35 +22,53 @@ export default function StatusBar() {
 
   const themeLabel = mode === "dark" ? "\u25CF Dark" : mode === "light" ? "\u25CB Light" : "\u25D0 Auto";
 
-  const handleCheckUpdate = useCallback(() => {
+  const handleCheckUpdate = useCallback(async () => {
     if (updateStatus === "checking" || updateStatus === "downloading") return;
     setUpdateStatus("checking");
-    invoke<UpdateInfo>("check_for_update")
-      .then((info) => {
-        if (info.update_available) {
-          setLatestVersion(info.latest_version);
-          setDownloadUrl(info.download_url);
-          setUpdateStatus("update-available");
-        } else {
-          setUpdateStatus("up-to-date");
-          setTimeout(() => setUpdateStatus("idle"), 3000);
-        }
-      })
-      .catch(() => {
-        setUpdateStatus("error");
+    try {
+      const update = await check();
+      if (update) {
+        setLatestVersion(update.version);
+        setUpdateRef(update);
+        setUpdateStatus("update-available");
+      } else {
+        setUpdateStatus("up-to-date");
         setTimeout(() => setUpdateStatus("idle"), 3000);
-      });
+      }
+    } catch {
+      setUpdateStatus("error");
+      setTimeout(() => setUpdateStatus("idle"), 3000);
+    }
   }, [updateStatus]);
 
-  const handleDownloadUpdate = useCallback(() => {
-    if (!downloadUrl) return;
-    setUpdateStatus("downloading");
-    invoke("download_and_install_update", { url: downloadUrl })
-      .catch(() => {
-        setUpdateStatus("error");
-        setTimeout(() => setUpdateStatus("idle"), 3000);
+  const handleDownloadAndInstall = useCallback(async () => {
+    if (!updateRef) return;
+    try {
+      setUpdateStatus("downloading");
+      let totalBytes = 0;
+      let downloadedBytes = 0;
+      await updateRef.downloadAndInstall((event) => {
+        if (event.event === "Started" && event.data.contentLength) {
+          totalBytes = event.data.contentLength;
+        } else if (event.event === "Progress") {
+          downloadedBytes += event.data.chunkLength;
+          if (totalBytes > 0) {
+            setDownloadProgress(Math.round((downloadedBytes / totalBytes) * 100));
+          }
+        } else if (event.event === "Finished") {
+          setUpdateStatus("done");
+        }
       });
-  }, [downloadUrl]);
+      setUpdateStatus("done");
+    } catch {
+      setUpdateStatus("error");
+      setTimeout(() => setUpdateStatus("idle"), 3000);
+    }
+  }, [updateRef]);
+
+  const handleRelaunch = useCallback(() => {
+    invoke("confirm_close").catch(() => {});
+  }, []);
 
   const renderUpdateContent = () => {
     switch (updateStatus) {
@@ -82,20 +79,33 @@ export default function StatusBar() {
       case "update-available":
         return (
           <span className="text-[var(--accent-orange)]">
-            v{latestVersion} available
-            {" · "}
+            v{latestVersion} available{" · "}
             <button
-              onClick={handleDownloadUpdate}
+              onClick={handleDownloadAndInstall}
               className="underline hover:text-[var(--text-primary)] cursor-pointer bg-transparent border-none p-0 text-[10px] text-[var(--accent-orange)]"
             >
-              Download & Install
+              Update Now
             </button>
           </span>
         );
       case "downloading":
-        return <span className="text-[var(--accent-cyan)] animate-pulse">Downloading...</span>;
-      case "installing":
-        return <span className="text-[var(--accent-green)] animate-pulse">Opening installer...</span>;
+        return (
+          <span className="text-[var(--accent-cyan)] animate-pulse">
+            Downloading {downloadProgress > 0 ? `${downloadProgress}%` : "..."}
+          </span>
+        );
+      case "done":
+        return (
+          <span className="text-[var(--accent-green)]">
+            Ready{" · "}
+            <button
+              onClick={handleRelaunch}
+              className="underline hover:text-[var(--text-primary)] cursor-pointer bg-transparent border-none p-0 text-[10px] text-[var(--accent-green)]"
+            >
+              Restart Now
+            </button>
+          </span>
+        );
       case "error":
         return <span className="text-[var(--accent-red)]">Update failed</span>;
       default:

@@ -39,6 +39,15 @@
       "entitlements": null,
       "signingIdentity": null,
       "minimumSystemVersion": "10.13"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/shehuiyao/claudedesktop/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ5N0QxRkQzRjkyQzk0MzQKUldRMGxDejUweDk5MlJVTHRNZDNqaFJFa0hrN0xUeWNvTWlleEs1bW42cm41VkJuZlFuTHlVbC8K"
     }
   }
 }
