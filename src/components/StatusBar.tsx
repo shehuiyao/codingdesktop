@@ -1,9 +1,11 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { useTheme } from "../hooks/useTheme";
 
 type UpdateStatus = "idle" | "checking" | "up-to-date" | "update-available" | "downloading" | "installing" | "done" | "error";
+
+const APP_VERSION = "0.6.0";
 
 export default function StatusBar() {
   const { mode, setMode } = useTheme();
@@ -12,6 +14,7 @@ export default function StatusBar() {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [updateRef, setUpdateRef] = useState<Awaited<ReturnType<typeof check>> | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
+  const checkCancelledRef = useRef(false);
 
   const cycleTheme = () => {
     setMode((prev) => {
@@ -23,11 +26,24 @@ export default function StatusBar() {
 
   const themeLabel = mode === "dark" ? "\u25CF Dark" : mode === "light" ? "\u25CB Light" : "\u25D0 Auto";
 
+  const handleCancelCheck = useCallback(() => {
+    checkCancelledRef.current = true;
+    setUpdateStatus("idle");
+  }, []);
+
   const handleCheckUpdate = useCallback(async () => {
     if (updateStatus === "checking" || updateStatus === "downloading") return;
+    checkCancelledRef.current = false;
     setUpdateStatus("checking");
     try {
-      const update = await check();
+      // Race between check() and a 15s timeout
+      const update = await Promise.race([
+        check(),
+        new Promise<null>((_, reject) =>
+          setTimeout(() => reject(new Error("Update check timed out after 15 seconds")), 15000)
+        ),
+      ]);
+      if (checkCancelledRef.current) return;
       if (update) {
         setLatestVersion(update.version);
         setUpdateRef(update);
@@ -37,6 +53,7 @@ export default function StatusBar() {
         setTimeout(() => setUpdateStatus("idle"), 3000);
       }
     } catch (e: unknown) {
+      if (checkCancelledRef.current) return;
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("Up to date") || msg.includes("up to date") || msg.includes("no update")) {
         setUpdateStatus("up-to-date");
@@ -82,7 +99,17 @@ export default function StatusBar() {
   const renderUpdateContent = () => {
     switch (updateStatus) {
       case "checking":
-        return <span className="text-[var(--text-secondary)] animate-pulse">Checking...</span>;
+        return (
+          <span className="text-[var(--text-secondary)] animate-pulse">
+            Checking...{" "}
+            <button
+              onClick={handleCancelCheck}
+              className="text-[var(--text-muted)] hover:text-[var(--accent-red)] cursor-pointer bg-transparent border-none p-0 text-[10px]"
+            >
+              Cancel
+            </button>
+          </span>
+        );
       case "up-to-date":
         return <span className="text-[var(--accent-green)]">Up to date</span>;
       case "update-available":
@@ -126,7 +153,7 @@ export default function StatusBar() {
     <div className="flex-1 border-t border-[var(--border-subtle)] bg-[var(--bg-secondary)] text-[var(--text-muted)]">
       <div className="flex items-center justify-between px-3 py-0.5 text-[10px]">
         <div className="flex items-center gap-3">
-          <span className="text-[var(--text-muted)]">v0.5.8</span>
+          <span className="text-[var(--text-muted)]">v{APP_VERSION}</span>
           <button
             onClick={handleCheckUpdate}
             disabled={updateStatus === "checking" || updateStatus === "downloading"}
