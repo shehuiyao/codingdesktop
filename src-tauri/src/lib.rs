@@ -441,7 +441,7 @@ fn get_commit_history(path: String, count: Option<u32>) -> Result<Vec<CommitEntr
 
 // ---- Update check ----
 
-const APP_VERSION: &str = "0.5.1";
+const APP_VERSION: &str = "0.5.2";
 
 #[derive(serde::Serialize)]
 struct UpdateInfo {

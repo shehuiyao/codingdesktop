@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTheme } from "../hooks/useTheme";
 
@@ -10,19 +10,12 @@ interface UpdateInfo {
 }
 
 export default function StatusBar() {
-  const [claudeInstalled, setClaudeInstalled] = useState<boolean | null>(null);
   const { mode, setMode } = useTheme();
   const [updateStatus, setUpdateStatus] = useState<
     "idle" | "checking" | "up-to-date" | "update-available" | "error"
   >("idle");
   const [latestVersion, setLatestVersion] = useState<string>("");
   const [releaseUrl, setReleaseUrl] = useState<string>("");
-
-  useEffect(() => {
-    invoke<boolean>("check_claude_installed")
-      .then(setClaudeInstalled)
-      .catch(() => setClaudeInstalled(false));
-  }, []);
 
   const cycleTheme = () => {
     setMode((prev) => {
@@ -43,7 +36,6 @@ export default function StatusBar() {
           setLatestVersion(info.latest_version);
           setReleaseUrl(info.release_url);
           setUpdateStatus("update-available");
-          // Don't auto-dismiss when update is available - keep showing it
         } else {
           setUpdateStatus("up-to-date");
           setTimeout(() => setUpdateStatus("idle"), 3000);
@@ -98,22 +90,8 @@ export default function StatusBar() {
   return (
     <div className="flex-1 border-t border-[var(--border-subtle)] bg-[var(--bg-secondary)] text-[var(--text-muted)]">
       <div className="flex items-center justify-between px-3 py-0.5 text-[10px]">
-        <div className="flex items-center gap-2">
-          <span
-            className={`inline-block w-1.5 h-1.5 rounded-full ${
-              claudeInstalled ? "bg-[var(--accent-green)]" : claudeInstalled === false ? "bg-[var(--accent-red)]" : "bg-[var(--text-secondary)]"
-            }`}
-          />
-          <span>
-            {claudeInstalled === null
-              ? "Checking CLI..."
-              : claudeInstalled
-                ? "CLI Ready"
-                : "CLI Not Found"}
-          </span>
-        </div>
         <div className="flex items-center gap-3">
-          {renderUpdateContent()}
+          <span className="text-[var(--text-muted)]">v0.5.2</span>
           <button
             onClick={handleCheckUpdate}
             disabled={updateStatus === "checking"}
@@ -122,6 +100,9 @@ export default function StatusBar() {
           >
             Check for Updates
           </button>
+          {renderUpdateContent()}
+        </div>
+        <div className="flex items-center gap-3">
           <button
             onClick={cycleTheme}
             className="text-[var(--text-muted)] hover:text-[var(--text-secondary)] cursor-pointer transition-colors duration-150 bg-transparent border-none p-0 text-[10px]"
@@ -129,7 +110,6 @@ export default function StatusBar() {
           >
             {themeLabel}
           </button>
-          <span className="text-[var(--text-muted)]">v0.5.1</span>
         </div>
       </div>
     </div>
