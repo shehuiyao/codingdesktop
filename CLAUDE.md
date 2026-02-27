@@ -49,10 +49,10 @@ TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/key.key)" \
 TAURI_SIGNING_PRIVATE_KEY_PASSWORD="your-password" \
 npm run tauri build
 ```
-- 构建产物目录：`src-tauri/target/release/bundle/`
-  - `dmg/Claude Desktop_X.Y.Z_aarch64.dmg`
-  - `macos/Claude Desktop.app.tar.gz`（更新包）
-  - `macos/Claude Desktop.app.tar.gz.sig`（签名文件）
+- 构建产物目录：`src-tauri/target/release/bundle/macos/`
+  - `Claude Desktop.app`（应用本体）
+  - `Claude Desktop.app.tar.gz`（更新包）
+  - `Claude Desktop.app.tar.gz.sig`（签名文件）
 
 ### 4. 生成 latest.json
 ```bash
@@ -74,7 +74,6 @@ EOF
 ### 5. 创建 GitHub Release
 ```bash
 gh release create vX.Y.Z \
-  "src-tauri/target/release/bundle/dmg/Claude Desktop_X.Y.Z_aarch64.dmg" \
   "src-tauri/target/release/bundle/macos/Claude Desktop.app.tar.gz" \
   "/tmp/latest.json" \
   --title "vX.Y.Z" \
