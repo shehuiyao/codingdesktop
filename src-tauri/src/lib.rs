@@ -443,7 +443,7 @@ fn get_commit_history(path: String, count: Option<u32>) -> Result<Vec<CommitEntr
 
 // ---- Update check ----
 
-const APP_VERSION: &str = "0.6.1";
+const APP_VERSION: &str = "0.6.2";
 
 #[derive(serde::Serialize)]
 struct UpdateInfo {
@@ -595,6 +595,64 @@ fn version_is_newer(latest: &str, current: &str) -> bool {
 struct SkillInfo {
     name: String,
     source: String,
+    description: String,
+    category: String,
+}
+
+/// 从 SKILL.md frontmatter 中提取 description
+fn parse_skill_description(skill_dir: &std::path::Path) -> String {
+    let skill_md = skill_dir.join("SKILL.md");
+    if !skill_md.exists() {
+        return String::new();
+    }
+    let content = match std::fs::read_to_string(&skill_md) {
+        Ok(c) => c,
+        Err(_) => return String::new(),
+    };
+    // 解析 frontmatter: --- ... description: xxx ... ---
+    if !content.starts_with("---") {
+        return String::new();
+    }
+    if let Some(end) = content[3..].find("---") {
+        let front = &content[3..3 + end];
+        for line in front.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("description:") {
+                let desc = rest.trim().trim_matches('"').trim_matches('\'');
+                // 处理多行 description（以 | 开头的 YAML 多行）
+                if desc.is_empty() || desc == "|" {
+                    // 取下一行非空内容
+                    for next_line in front.lines().skip_while(|l| !l.trim().starts_with("description:")).skip(1) {
+                        let next = next_line.trim();
+                        if !next.is_empty() && !next.contains(':') {
+                            return next.to_string();
+                        }
+                        break;
+                    }
+                    return String::new();
+                }
+                return desc.to_string();
+            }
+        }
+    }
+    String::new()
+}
+
+/// 根据技能名称判断分类
+fn categorize_skill(name: &str, source: &str) -> String {
+    if source == "plugin" {
+        return "official".to_string();
+    }
+    let senguo_prefixes = [
+        "common-", "publish-", "merge-", "testing-", "senguo", "peon-ping",
+    ];
+    let lower = name.to_lowercase();
+    for prefix in &senguo_prefixes {
+        if lower.starts_with(prefix) {
+            return "senguo".to_string();
+        }
+    }
+    "personal".to_string()
 }
 
 #[tauri::command]
@@ -603,15 +661,21 @@ fn list_skills() -> Result<Vec<SkillInfo>, String> {
     let claude_dir = home.join(".claude");
     let mut skills = Vec::new();
 
+    // 自定义技能
     let skills_dir = claude_dir.join("skills");
     if skills_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(&skills_dir) {
             for entry in entries.flatten() {
-                if entry.path().is_dir() {
+                let path = entry.path();
+                if path.is_dir() {
                     if let Some(name) = entry.file_name().to_str() {
+                        let description = parse_skill_description(&path);
+                        let category = categorize_skill(name, "custom");
                         skills.push(SkillInfo {
                             name: name.to_string(),
                             source: "custom".to_string(),
+                            description,
+                            category,
                         });
                     }
                 }
@@ -619,17 +683,38 @@ fn list_skills() -> Result<Vec<SkillInfo>, String> {
         }
     }
 
+    // 插件技能：读取每个插件下的 skills/ 子目录
     let plugins_file = claude_dir.join("plugins").join("installed_plugins.json");
     if plugins_file.exists() {
         if let Ok(content) = std::fs::read_to_string(&plugins_file) {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
                 if let Some(plugins) = json.get("plugins").and_then(|p| p.as_object()) {
-                    for key in plugins.keys() {
-                        let plugin_name = key.split('@').next().unwrap_or(key);
-                        skills.push(SkillInfo {
-                            name: plugin_name.to_string(),
-                            source: "plugin".to_string(),
-                        });
+                    for (_key, val) in plugins {
+                        if let Some(arr) = val.as_array() {
+                            if let Some(first) = arr.first() {
+                                if let Some(install_path) = first.get("installPath").and_then(|p| p.as_str()) {
+                                    let skills_path = std::path::Path::new(install_path).join("skills");
+                                    if skills_path.exists() {
+                                        if let Ok(entries) = std::fs::read_dir(&skills_path) {
+                                            for entry in entries.flatten() {
+                                                let path = entry.path();
+                                                if path.is_dir() {
+                                                    if let Some(name) = entry.file_name().to_str() {
+                                                        let description = parse_skill_description(&path);
+                                                        skills.push(SkillInfo {
+                                                            name: name.to_string(),
+                                                            source: "plugin".to_string(),
+                                                            description,
+                                                            category: "official".to_string(),
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -638,6 +723,88 @@ fn list_skills() -> Result<Vec<SkillInfo>, String> {
 
     skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(skills)
+}
+
+#[tauri::command]
+fn get_disabled_skills(project_path: String) -> Result<Vec<String>, String> {
+    let settings_path = std::path::Path::new(&project_path)
+        .join(".claude")
+        .join("settings.local.json");
+    if !settings_path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&settings_path)
+        .map_err(|e| format!("读取配置失败: {}", e))?;
+    let json: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("解析配置失败: {}", e))?;
+    let mut disabled = Vec::new();
+    if let Some(deny) = json.get("permissions").and_then(|p| p.get("deny")).and_then(|d| d.as_array()) {
+        for item in deny {
+            if let Some(s) = item.as_str() {
+                // 匹配 "Skill(xxx)" 格式
+                if let Some(name) = s.strip_prefix("Skill(").and_then(|r| r.strip_suffix(')')) {
+                    disabled.push(name.to_string());
+                }
+            }
+        }
+    }
+    Ok(disabled)
+}
+
+#[tauri::command]
+fn toggle_skill_for_project(project_path: String, skill_name: String, enabled: bool) -> Result<(), String> {
+    let claude_dir = std::path::Path::new(&project_path).join(".claude");
+    if !claude_dir.exists() {
+        std::fs::create_dir_all(&claude_dir)
+            .map_err(|e| format!("创建 .claude 目录失败: {}", e))?;
+    }
+    let settings_path = claude_dir.join("settings.local.json");
+    let mut json: serde_json::Value = if settings_path.exists() {
+        let content = std::fs::read_to_string(&settings_path)
+            .map_err(|e| format!("读取配置失败: {}", e))?;
+        serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    let skill_entry = format!("Skill({})", skill_name);
+
+    // 确保 permissions.deny 数组存在
+    if json.get("permissions").is_none() {
+        json["permissions"] = serde_json::json!({});
+    }
+    if json["permissions"].get("deny").is_none() {
+        json["permissions"]["deny"] = serde_json::json!([]);
+    }
+
+    let deny = json["permissions"]["deny"].as_array_mut()
+        .ok_or("deny 字段类型异常")?;
+
+    if enabled {
+        // 启用：从 deny 列表中移除
+        deny.retain(|v| v.as_str() != Some(&skill_entry));
+    } else {
+        // 禁用：添加到 deny 列表（去重）
+        if !deny.iter().any(|v| v.as_str() == Some(&skill_entry)) {
+            deny.push(serde_json::Value::String(skill_entry));
+        }
+    }
+
+    // 如果 deny 为空，清理空结构
+    if deny.is_empty() {
+        if let Some(perms) = json.get_mut("permissions").and_then(|p| p.as_object_mut()) {
+            perms.remove("deny");
+            if perms.is_empty() {
+                json.as_object_mut().unwrap().remove("permissions");
+            }
+        }
+    }
+
+    let output = serde_json::to_string_pretty(&json)
+        .map_err(|e| format!("序列化失败: {}", e))?;
+    std::fs::write(&settings_path, output)
+        .map_err(|e| format!("写入配置失败: {}", e))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -678,6 +845,8 @@ pub fn run() {
             check_claude_installed,
             list_directory,
             list_skills,
+            get_disabled_skills,
+            toggle_skill_for_project,
             get_git_info,
             chat_send,
             chat_stop,

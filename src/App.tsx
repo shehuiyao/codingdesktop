@@ -508,7 +508,7 @@ function App() {
             {/* Skills panel overlay */}
             {showSkills && (
               <div className="w-72 border-l border-[var(--border-subtle)] relative">
-                <SkillsPanel onClose={() => setShowSkills(false)} />
+                <SkillsPanel onClose={() => setShowSkills(false)} workingDir={workingDir} />
               </div>
             )}
           </div>
