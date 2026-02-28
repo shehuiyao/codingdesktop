@@ -11,6 +11,7 @@ import SkillsPanel from "./components/SkillsPanel";
 import BranchSwitcher from "./components/BranchSwitcher";
 import CommitHistory from "./components/CommitHistory";
 import TabBar, { type Tab, type CliTool } from "./components/TabBar";
+import SplitDivider from "./components/SplitDivider";
 
 interface GitInfo {
   branch: string;
@@ -35,6 +36,14 @@ function App() {
   const [terminalActivated, setTerminalActivated] = useState<Set<string>>(new Set());
   // Map sessionId -> tabId for correlating pty events to tabs
   const sessionTabMap = useRef<Map<string, string>>(new Map());
+
+  // 分屏状态
+  const [splitTabId, setSplitTabId] = useState<string | null>(null);
+  const [splitRatio, setSplitRatio] = useState(0.5);
+  // TabBar 拖拽状态
+  const [tabDragging, setTabDragging] = useState(false);
+  const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
+  const [showDropZone, setShowDropZone] = useState(false);
 
   const handleNewTab = useCallback(async () => {
     const selected = await open({
@@ -68,6 +77,11 @@ function App() {
         }
         return remaining;
       });
+      // 关闭的 tab 正好是分屏 tab 时，退出分屏
+      if (tabId === splitTabId) {
+        setSplitTabId(null);
+        setSplitRatio(0.5);
+      }
       setTerminalActivated((prev) => {
         const next = new Set(prev);
         next.delete(tabId);
@@ -80,7 +94,7 @@ function App() {
         }
       }
     },
-    [activeTabId],
+    [activeTabId, splitTabId],
   );
 
   const handleSelectTab = useCallback((tabId: string) => {
@@ -103,6 +117,34 @@ function App() {
 
   const handleReorderTabs = useCallback((reordered: Tab[]) => {
     setTabs(reordered);
+  }, []);
+
+  const handleTabDragStateChange = useCallback((dragging: boolean, tabId: string | null) => {
+    setTabDragging(dragging);
+    setDraggingTabId(tabId);
+    if (!dragging) setShowDropZone(false);
+  }, []);
+
+  const handleContentPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!tabDragging) return;
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const isRightHalf = e.clientX > rect.left + rect.width / 2;
+      setShowDropZone(isRightHalf);
+    },
+    [tabDragging],
+  );
+
+  const handleContentPointerUp = useCallback(() => {
+    if (tabDragging && showDropZone && draggingTabId && draggingTabId !== activeTabId) {
+      setSplitTabId(draggingTabId);
+    }
+    setShowDropZone(false);
+  }, [tabDragging, showDropZone, draggingTabId, activeTabId]);
+
+  const handleCloseSplit = useCallback(() => {
+    setSplitTabId(null);
+    setSplitRatio(0.5);
   }, []);
 
   // Update a specific tab's status
@@ -332,16 +374,22 @@ function App() {
             <TabBar
               tabs={tabs}
               activeTabId={activeTabId}
+              splitTabId={splitTabId}
               onSelectTab={handleSelectTab}
               onCloseTab={handleCloseTab}
               onNewTab={handleNewTab}
               onReorderTabs={handleReorderTabs}
+              onDragStateChange={handleTabDragStateChange}
             />
           )}
 
           <div className="flex-1 flex overflow-hidden">
             {/* Main content area */}
-            <div className="flex-1 relative overflow-hidden">
+            <div
+              className="flex-1 relative overflow-hidden"
+              onPointerMove={handleContentPointerMove}
+              onPointerUp={handleContentPointerUp}
+            >
               {/* Mode picker - shown when tab is terminal mode but not yet activated */}
               {tabs
                 .filter((tab) => tab.mode === "terminal" && !terminalActivated.has(tab.id))
@@ -391,26 +439,70 @@ function App() {
                   </div>
                 ))}
 
+              {/* 分屏 drop zone 高亮 */}
+              {tabDragging && showDropZone && (
+                <div className="absolute inset-y-0 right-0 w-1/2 z-20 bg-[var(--accent-cyan)]/10 border-2 border-dashed border-[var(--accent-cyan)] rounded-r-lg pointer-events-none flex items-center justify-center">
+                  <span className="text-sm text-[var(--accent-cyan)] font-medium">Split Right</span>
+                </div>
+              )}
+
               {/* Terminal mode tabs - only mount if terminal was ever activated */}
               {tabs
                 .filter((tab) => terminalActivated.has(tab.id))
-                .map((tab) => (
-                  <div
-                    key={`term-${tab.id}`}
-                    className="absolute inset-0 flex flex-col"
-                    style={{ display: tab.id === activeTabId && tab.mode === "terminal" ? "flex" : "none" }}
-                  >
-                    <div className="flex-1 overflow-hidden">
-                      <LiveTerminal
-                      workingDir={tab.workingDir}
-                      yolo={tab.yolo}
-                      tool={tab.tool}
-                      onSessionStarted={(sessionId) => handleSessionStarted(tab.id, sessionId)}
-                      onError={() => updateTabStatus(tab.id, "error")}
-                    />
+                .map((tab) => {
+                  const isActive = tab.id === activeTabId && tab.mode === "terminal";
+                  const isSplit = splitTabId !== null && tab.id === splitTabId && tab.mode === "terminal";
+                  const visible = isActive || isSplit;
+
+                  let posStyle: React.CSSProperties = {};
+                  if (splitTabId) {
+                    if (isActive) {
+                      posStyle = { left: 0, width: `calc(${splitRatio * 100}% - 2px)`, right: "auto" };
+                    } else if (isSplit) {
+                      posStyle = { right: 0, width: `calc(${(1 - splitRatio) * 100}% - 2px)`, left: "auto" };
+                    }
+                  }
+
+                  return (
+                    <div
+                      key={`term-${tab.id}`}
+                      className="absolute inset-0 flex flex-col"
+                      style={{ display: visible ? "flex" : "none", ...posStyle }}
+                    >
+                      <div className="flex-1 overflow-hidden">
+                        <LiveTerminal
+                          workingDir={tab.workingDir}
+                          yolo={tab.yolo}
+                          tool={tab.tool}
+                          onSessionStarted={(sessionId) => handleSessionStarted(tab.id, sessionId)}
+                          onError={() => updateTabStatus(tab.id, "error")}
+                        />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
+
+              {/* 分屏分隔线 */}
+              {splitTabId && (
+                <div
+                  className="absolute top-0 bottom-0 z-10"
+                  style={{ left: `calc(${splitRatio * 100}% - 2px)` }}
+                >
+                  <SplitDivider onRatioChange={setSplitRatio} />
+                </div>
+              )}
+
+              {/* 分屏关闭按钮 */}
+              {splitTabId && (
+                <button
+                  onClick={handleCloseSplit}
+                  className="absolute top-1 z-10 w-5 h-5 flex items-center justify-center rounded text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors"
+                  style={{ right: 4 }}
+                  title="Close split"
+                >
+                  ✕
+                </button>
+              )}
 
               {/* History session view */}
               {!showingTab && activeSessionId && (
