@@ -161,6 +161,8 @@ function App() {
 
   // Track which tabs have already transitioned from idle, to avoid re-renders on every pty-output
   const activatedTabsRef = useRef<Set<string>>(new Set());
+  // Track which tabs are in waiting state, to restore running on next meaningful output
+  const waitingTabsRef = useRef<Set<string>>(new Set());
 
   // Listen for pty-output and pty-exit events to update tab status
   useEffect(() => {
@@ -169,9 +171,19 @@ function App() {
     const setupListeners = async () => {
       const outputUn = await listen<{ id: string; data: string }>("pty-output", (event) => {
         const tabId = sessionTabMap.current.get(event.payload.id);
-        if (tabId && !activatedTabsRef.current.has(tabId)) {
-          // Only update once: idle -> running, then never touch again from output events
+        if (!tabId) return;
+        if (!activatedTabsRef.current.has(tabId)) {
           activatedTabsRef.current.add(tabId);
+          updateTabStatus(tabId, "running");
+        }
+        // 检测 Claude Code 等待用户确认的提示（如工具调用审批）
+        const data = event.payload.data;
+        if (/Do you want to proceed|Allow|Yes\/No|approve|deny|permit/i.test(data)) {
+          waitingTabsRef.current.add(tabId);
+          updateTabStatus(tabId, "waiting");
+        } else if (waitingTabsRef.current.has(tabId) && data.trim().length > 2) {
+          // 用户确认后收到新输出，恢复 running
+          waitingTabsRef.current.delete(tabId);
           updateTabStatus(tabId, "running");
         }
       });

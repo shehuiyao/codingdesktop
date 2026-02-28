@@ -79,12 +79,15 @@ git commit -m "chore: 简要描述本次发版的主要变更"
 git push
 ```
 
-### 3. 构建（带签名）
+### 3. 构建（带签名 + 反馈 Token）
 ```bash
+GITHUB_FEEDBACK_TOKEN="$(cat ~/.claude-desktop/.github_token)" \
 TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/key.key)" \
-TAURI_SIGNING_PRIVATE_KEY_PASSWORD="your-password" \
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD="tauri" \
 npm run tauri build
 ```
+- `GITHUB_FEEDBACK_TOKEN`：用户提交反馈时自动创建 GitHub Issue（不带则反馈仅保存本地）
+- Token 存放在 `~/.claude-desktop/.github_token`，需 fine-grained PAT，仅需 Issues 写权限
 - 构建产物目录：`src-tauri/target/release/bundle/macos/`
   - `Claude Desktop.app`（应用本体）
   - `Claude Desktop.app.tar.gz`（更新包）

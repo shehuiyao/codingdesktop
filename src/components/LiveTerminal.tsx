@@ -173,6 +173,11 @@ export default function LiveTerminal({ workingDir, yolo, tool, onSessionStarted,
         if (event.payload.id === sessionId) {
           hasReceivedOutput = true;
           term!.write(event.payload.data);
+          // 检测技能调用，记录使用次数
+          const m = event.payload.data.match(/Launching skill:\s*(\S+)/);
+          if (m) {
+            invoke("record_skill_usage", { skillName: m[1] }).catch(() => {});
+          }
         }
       });
       unlisteners.push(outputUn);

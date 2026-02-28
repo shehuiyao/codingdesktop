@@ -732,7 +732,7 @@ struct FeedbackEntry {
     timestamp: String,
 }
 
-/// 提交反馈，保存到 ~/.claude-desktop/feedback.json
+/// 提交反馈，保存到本地并创建 GitHub Issue
 #[tauri::command]
 fn submit_feedback(content: String) -> Result<(), String> {
     let home = dirs::home_dir().ok_or("Cannot find home directory")?;
@@ -743,22 +743,45 @@ fn submit_feedback(content: String) -> Result<(), String> {
     }
     let feedback_file = data_dir.join("feedback.json");
     let mut feedbacks: Vec<FeedbackEntry> = if feedback_file.exists() {
-        let content = std::fs::read_to_string(&feedback_file).unwrap_or_default();
-        serde_json::from_str(&content).unwrap_or_default()
+        let c = std::fs::read_to_string(&feedback_file).unwrap_or_default();
+        serde_json::from_str(&c).unwrap_or_default()
     } else {
         Vec::new()
     };
 
+    let now = chrono::Utc::now();
     feedbacks.push(FeedbackEntry {
-        id: format!("fb-{}", chrono::Utc::now().timestamp_millis()),
-        content,
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        id: format!("fb-{}", now.timestamp_millis()),
+        content: content.clone(),
+        timestamp: now.to_rfc3339(),
     });
 
     let output = serde_json::to_string_pretty(&feedbacks)
         .map_err(|e| format!("序列化失败: {}", e))?;
     std::fs::write(&feedback_file, output)
         .map_err(|e| format!("写入失败: {}", e))?;
+
+    // 同步创建 GitHub Issue（构建时注入 token）
+    if let Some(token) = option_env!("GITHUB_FEEDBACK_TOKEN") {
+        let title = if content.len() > 50 {
+            format!("[用户反馈] {}...", &content[..content.char_indices().nth(50).map(|(i,_)|i).unwrap_or(content.len())])
+        } else {
+            format!("[用户反馈] {}", &content)
+        };
+        let body = format!("## 用户反馈\n\n{}\n\n---\n*提交时间: {}*", content, now.to_rfc3339());
+        let _ = reqwest::blocking::Client::new()
+            .post("https://api.github.com/repos/shehuiyao/claudedesktop/issues")
+            .header("Authorization", format!("Bearer {}", token))
+            .header("User-Agent", "claude-desktop")
+            .header("Accept", "application/vnd.github+json")
+            .json(&serde_json::json!({
+                "title": title,
+                "body": body,
+                "labels": ["feedback"]
+            }))
+            .send();
+    }
+
     Ok(())
 }
 

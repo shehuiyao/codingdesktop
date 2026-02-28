@@ -5,7 +5,9 @@
       "Bash(git:*)",
       "Bash(npm run:*)",
       "Bash(gh release:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(npx tsc:*)",
+      "Bash(cargo check:*)"
     ]
   }
 }

@@ -9,7 +9,7 @@ export interface Tab {
   mode: "chat" | "terminal";
   yolo?: boolean;
   tool?: CliTool;
-  status?: "idle" | "running" | "error" | "done";
+  status?: "idle" | "running" | "waiting" | "error" | "done";
 }
 
 interface TabBarProps {
@@ -162,6 +162,7 @@ export default function TabBar({
             )}
             {/* Status dot */}
             <span className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
+              tab.status === "waiting" ? "bg-[var(--accent-orange,#f59e0b)] animate-pulse" :
               tab.status === "running" ? "bg-[var(--accent-green)] animate-pulse" :
               tab.status === "error" ? "bg-[var(--accent-red)]" :
               tab.status === "done" ? "bg-[var(--accent-blue)]" :
@@ -202,6 +203,7 @@ export default function TabBar({
           style={{ left: ghostPos.x, top: ghostPos.y }}
         >
           <span className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
+            dragTab.status === "waiting" ? "bg-[var(--accent-orange,#f59e0b)]" :
             dragTab.status === "running" ? "bg-[var(--accent-green)]" :
             dragTab.status === "error" ? "bg-[var(--accent-red)]" :
             dragTab.status === "done" ? "bg-[var(--accent-blue)]" :

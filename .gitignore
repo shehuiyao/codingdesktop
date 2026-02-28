@@ -21,3 +21,9 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Claude Code local settings (may contain tokens)
+.claude/settings.local.json
+
+# Playwright MCP artifacts
+.playwright-mcp/
