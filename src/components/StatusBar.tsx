@@ -141,7 +141,7 @@ export default function StatusBar() {
           </span>
         );
       case "error":
-        return <span className="text-[var(--accent-red)]" title={errorMsg}>Update failed</span>;
+        return <span className="text-[var(--accent-red)]" title={errorMsg}>Update failed: {errorMsg.slice(0, 60)}</span>;
       default:
         return null;
     }
