@@ -15,7 +15,6 @@ interface LiveTerminalProps {
   tool?: CliTool;
   onSessionStarted?: (id: string) => void;
   onError?: (error: string) => void;
-  onUserInput?: (payload: { sessionId: string | null; data: string }) => void;
 }
 
 const TERM_FONT = "'JetBrains Mono NF', 'SF Mono', Menlo, Monaco, monospace";
@@ -67,7 +66,7 @@ function getTerminalTheme(isDark: boolean) {
   };
 }
 
-export default function LiveTerminal({ workingDir, yolo, tool, onSessionStarted, onError, onUserInput }: LiveTerminalProps) {
+export default function LiveTerminal({ workingDir, yolo, tool, onSessionStarted, onError }: LiveTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -76,8 +75,6 @@ export default function LiveTerminal({ workingDir, yolo, tool, onSessionStarted,
   onSessionStartedRef.current = onSessionStarted;
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
-  const onUserInputRef = useRef(onUserInput);
-  onUserInputRef.current = onUserInput;
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(true);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -229,9 +226,6 @@ export default function LiveTerminal({ workingDir, yolo, tool, onSessionStarted,
         await invoke("resize_session", { sessionId: id, rows, cols });
 
         const dataDisposable = term.onData((data) => {
-          if (onUserInputRef.current) {
-            onUserInputRef.current({ sessionId: sessionIdRef.current, data });
-          }
           if (sessionIdRef.current) {
             invoke("send_input", { sessionId: sessionIdRef.current, data }).catch(() => {});
           }

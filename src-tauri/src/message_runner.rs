@@ -1,10 +1,121 @@
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use regex::Regex;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use tauri::{AppHandle, Emitter};
+
+const CONFIRMATION_TAIL_MAX_CHARS: usize = 2000;
+const CONFIRMATION_CUES: [&str; 13] = [
+    "do you want to",
+    "do you want to make this edit",
+    "are you sure",
+    "proceed",
+    "continue",
+    "confirm",
+    "manual approval",
+    "approval",
+    "permission",
+    "allow",
+    "deny",
+    "choose an option",
+    "select an option",
+];
+
+fn ansi_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[P^_].*?\x1b\\|\x1b[@-_]")
+            .expect("valid ANSI regex")
+    })
+}
+
+fn yn_input_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)([\(\[]\s*y(?:es)?\s*/\s*n(?:o)?\s*[\)\]])|\by\s*/\s*n\b")
+            .expect("valid y/n regex")
+    })
+}
+
+fn yes_like_option_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)(?:^|\s)(?:[❯›>→]\s*)?\d+\.\s*(yes|proceed|continue|allow|approve)\b")
+            .expect("valid yes-like option regex")
+    })
+}
+
+fn no_like_option_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)(?:^|\s)(?:[❯›>→]\s*)?\d+\.\s*(no|cancel|deny|reject)\b")
+            .expect("valid no-like option regex")
+    })
+}
+
+fn any_choice_option_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)(?:^|\s)(?:[❯›>→]\s*)?\d+\.\s*(yes|no|cancel|deny|allow|approve|reject|proceed|continue)\b")
+            .expect("valid choice option regex")
+    })
+}
+
+fn strip_ansi(input: &str) -> String {
+    ansi_re().replace_all(input, "").into_owned()
+}
+
+fn normalize_terminal_text(input: &str) -> String {
+    let stripped = strip_ansi(input).replace('\r', "\n");
+    stripped.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn append_tail(tail: &mut String, chunk: &str, max_chars: usize) {
+    if chunk.is_empty() {
+        return;
+    }
+    if !tail.is_empty() {
+        tail.push(' ');
+    }
+    tail.push_str(chunk);
+    if tail.len() > max_chars {
+        let mut start = tail.len() - max_chars;
+        while !tail.is_char_boundary(start) {
+            start += 1;
+        }
+        tail.drain(..start);
+    }
+}
+
+fn is_confirmation_prompt(window_text: &str) -> bool {
+    if window_text.is_empty() {
+        return false;
+    }
+
+    let text = window_text.to_lowercase();
+    let has_confirm_cue = CONFIRMATION_CUES.iter().any(|cue| text.contains(cue));
+    let has_edit_confirm_cue = text.contains("do you want to make this edit");
+    let has_yn_input = yn_input_re().is_match(window_text);
+    let has_yes_like_option = yes_like_option_re().is_match(window_text);
+    let has_no_like_option = no_like_option_re().is_match(window_text);
+    let has_any_choice_option = any_choice_option_re().is_match(window_text);
+    let has_binary_choice_list = has_yes_like_option && has_no_like_option;
+    let has_prompt_footer = text.contains("esc to cancel") || text.contains("tab to amend");
+
+    if has_edit_confirm_cue && (has_any_choice_option || has_prompt_footer || has_yn_input) {
+        return true;
+    }
+    if has_confirm_cue && (has_yn_input || has_binary_choice_list || has_prompt_footer) {
+        return true;
+    }
+    if has_binary_choice_list && has_prompt_footer {
+        return true;
+    }
+    has_yn_input && has_confirm_cue
+}
 
 /// Find the last valid UTF-8 boundary in a byte slice.
 /// Returns the number of bytes that form valid UTF-8 from the start.
@@ -204,19 +315,41 @@ impl PtySession {
         thread::spawn(move || {
             let mut buf = [0u8; 8192];
             let mut remainder: Vec<u8> = Vec::new();
+            let mut prompt_tail = String::new();
+            let mut awaiting_confirmation = false;
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => {
                         // Flush any remaining bytes
                         if !remainder.is_empty() {
                             let data = String::from_utf8_lossy(&remainder).to_string();
+                            let normalized = normalize_terminal_text(&data);
+                            append_tail(
+                                &mut prompt_tail,
+                                &normalized,
+                                CONFIRMATION_TAIL_MAX_CHARS,
+                            );
+                            let detected = is_confirmation_prompt(&prompt_tail);
+                            if detected != awaiting_confirmation {
+                                awaiting_confirmation = detected;
+                                let _ = app_clone.emit(
+                                    "pty-awaiting-confirmation",
+                                    serde_json::json!({"id": &session_id, "waiting": detected}),
+                                );
+                            }
                             let _ = app_clone.emit(
                                 "pty-output",
-                                serde_json::json!({"id": session_id, "data": data}),
+                                serde_json::json!({"id": &session_id, "data": data}),
+                            );
+                        }
+                        if awaiting_confirmation {
+                            let _ = app_clone.emit(
+                                "pty-awaiting-confirmation",
+                                serde_json::json!({"id": &session_id, "waiting": false}),
                             );
                         }
                         let _ = app_clone
-                            .emit("pty-exit", serde_json::json!({"id": session_id}));
+                            .emit("pty-exit", serde_json::json!({"id": &session_id}));
                         break;
                     }
                     Ok(n) => {
@@ -238,23 +371,43 @@ impl PtySession {
                         if valid_up_to > 0 {
                             // Safe: we verified this is valid UTF-8 up to this point
                             let data = String::from_utf8_lossy(&combined[..valid_up_to]).to_string();
+                            let normalized = normalize_terminal_text(&data);
+                            append_tail(
+                                &mut prompt_tail,
+                                &normalized,
+                                CONFIRMATION_TAIL_MAX_CHARS,
+                            );
+                            let detected = is_confirmation_prompt(&prompt_tail);
+                            if detected != awaiting_confirmation {
+                                awaiting_confirmation = detected;
+                                let _ = app_clone.emit(
+                                    "pty-awaiting-confirmation",
+                                    serde_json::json!({"id": &session_id, "waiting": detected}),
+                                );
+                            }
                             let _ = app_clone.emit(
                                 "pty-output",
-                                serde_json::json!({"id": session_id, "data": data}),
+                                serde_json::json!({"id": &session_id, "data": data}),
                             );
                         }
                     }
                     Err(e) => {
                         // Emit detailed error event before exit
+                        if awaiting_confirmation {
+                            let _ = app_clone.emit(
+                                "pty-awaiting-confirmation",
+                                serde_json::json!({"id": &session_id, "waiting": false}),
+                            );
+                        }
                         let _ = app_clone.emit(
                             "pty-error",
                             serde_json::json!({
-                                "id": session_id,
+                                "id": &session_id,
                                 "error": format!("PTY read error: {}", e)
                             }),
                         );
                         let _ = app_clone
-                            .emit("pty-exit", serde_json::json!({"id": session_id}));
+                            .emit("pty-exit", serde_json::json!({"id": &session_id}));
                         break;
                     }
                 }

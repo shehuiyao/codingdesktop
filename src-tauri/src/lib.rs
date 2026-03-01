@@ -60,6 +60,7 @@ fn start_session(
 
 #[tauri::command]
 fn send_input(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     data: String,
@@ -69,7 +70,16 @@ fn send_input(
         .lock()
         .map_err(|e| format!("Lock error: {}", e))?;
     match sessions.get(&session_id) {
-        Some(session) => session.write(&data),
+        Some(session) => {
+            let result = session.write(&data);
+            if result.is_ok() {
+                let _ = app.emit(
+                    "pty-awaiting-confirmation",
+                    serde_json::json!({ "id": &session_id, "waiting": false }),
+                );
+            }
+            result
+        }
         None => Err(format!("No session with id: {}", session_id)),
     }
 }
