@@ -177,11 +177,12 @@ function App() {
           updateTabStatus(tabId, "running");
         }
         // 检测 Claude Code 等待用户确认的提示（如工具调用审批）
-        const data = event.payload.data;
-        if (/Do you want to (proceed|make this|run|execute|allow)|Allow|Yes\/No|approve|deny|permit|\? \(y\/n\)|❯ 1\. Yes/i.test(data)) {
+        // 先剥离 ANSI 转义码，再匹配结构性特征，避免颜色码干扰匹配
+        const cleanData = event.payload.data.replace(/\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\][^\x1b]*\x1b\\/g, "");
+        if (/Do you want to |❯\s*\d+\.\s*Yes|\(\s*y\s*\/\s*n\s*\)/i.test(cleanData)) {
           waitingTabsRef.current.add(tabId);
           updateTabStatus(tabId, "waiting");
-        } else if (waitingTabsRef.current.has(tabId) && data.trim().length > 2) {
+        } else if (waitingTabsRef.current.has(tabId) && cleanData.trim().length > 2) {
           // 用户确认后收到新输出，恢复 running
           waitingTabsRef.current.delete(tabId);
           updateTabStatus(tabId, "running");

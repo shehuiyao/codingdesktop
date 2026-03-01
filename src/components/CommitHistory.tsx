@@ -60,7 +60,10 @@ export default function CommitHistory({ workingDir }: CommitHistoryProps) {
               key={commit.hash}
               className="px-3 py-1.5 hover:bg-[var(--bg-hover)] transition-colors duration-100"
             >
-              <div className="text-xs text-[var(--text-primary)] truncate">
+              <div
+                className="text-xs text-[var(--text-primary)] truncate hover:whitespace-normal hover:break-words"
+                title={commit.message}
+              >
                 {commit.message}
               </div>
               <div className="text-[10px] text-[var(--text-muted)] mt-0.5 font-mono">
