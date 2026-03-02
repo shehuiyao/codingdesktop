@@ -67,6 +67,7 @@ export default function SkillsPanel({ onClose, workingDir }: SkillsPanelProps) {
   const [disabledSkills, setDisabledSkills] = useState<Set<string>>(new Set());
   const [globalDisabledSkills, setGlobalDisabledSkills] = useState<Set<string>>(new Set());
   const [usageCounts, setUsageCounts] = useState<Record<string, number>>({});
+  const [scope, setScope] = useState<"global" | "project">(workingDir ? "project" : "global");
 
   // 加载项目级禁用列表
   const loadDisabled = useCallback(() => {
@@ -158,12 +159,32 @@ export default function SkillsPanel({ onClose, workingDir }: SkillsPanelProps) {
         </button>
       </div>
 
-      {/* Legend */}
-      <div className="flex items-center gap-3 px-4 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]">
-        <span className="text-[10px] text-[var(--text-muted)]">G = 全局开关</span>
-        {workingDir && (
-          <span className="text-[10px] text-[var(--text-muted)]">P = 项目开关</span>
-        )}
+      {/* Scope 切换 */}
+      <div className="flex items-center px-4 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]">
+        <div className="flex rounded-md overflow-hidden border border-[var(--border-subtle)]">
+          <button
+            className={`px-3 py-0.5 text-[10px] transition-colors duration-150 cursor-pointer ${
+              scope === "global"
+                ? "bg-[var(--accent-blue,#60a5fa)] text-white"
+                : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+            }`}
+            onClick={() => setScope("global")}
+          >
+            全局
+          </button>
+          {workingDir && (
+            <button
+              className={`px-3 py-0.5 text-[10px] transition-colors duration-150 cursor-pointer border-l border-[var(--border-subtle)] ${
+                scope === "project"
+                  ? "bg-[var(--accent-blue,#60a5fa)] text-white"
+                  : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+              }`}
+              onClick={() => setScope("project")}
+            >
+              项目
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Content */}
@@ -196,7 +217,7 @@ export default function SkillsPanel({ onClose, workingDir }: SkillsPanelProps) {
                       const isOpen = expanded.has(skill.name);
                       const globalEnabled = !globalDisabledSkills.has(skill.name);
                       const projectEnabled = !disabledSkills.has(skill.name);
-                      const isEnabled = globalEnabled && projectEnabled;
+                      const isEnabled = scope === "global" ? globalEnabled : globalEnabled && projectEnabled;
                       const count = usageCounts[skill.name] || 0;
                       return (
                         <div
@@ -226,21 +247,20 @@ export default function SkillsPanel({ onClose, workingDir }: SkillsPanelProps) {
                                 {count}次
                               </span>
                             )}
-                            {/* 全局开关 */}
-                            <MiniToggle
-                              on={globalEnabled}
-                              color={group.color}
-                              label="G"
-                              title={globalEnabled ? "全局禁用此技能" : "全局启用此技能"}
-                              onClick={() => toggleGlobalSkill(skill.name, globalEnabled)}
-                            />
-                            {/* 项目级开关 */}
-                            {workingDir && (
+                            {scope === "global" ? (
+                              <MiniToggle
+                                on={globalEnabled}
+                                color={group.color}
+                                label=""
+                                title={globalEnabled ? "全局禁用此技能" : "全局启用此技能"}
+                                onClick={() => toggleGlobalSkill(skill.name, globalEnabled)}
+                              />
+                            ) : (
                               <MiniToggle
                                 on={projectEnabled}
                                 color={group.color}
                                 disabled={!globalEnabled}
-                                label="P"
+                                label=""
                                 title={
                                   !globalEnabled
                                     ? "全局已禁用，请先全局启用"
