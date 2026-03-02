@@ -58,11 +58,11 @@ fn claude_dir() -> Option<PathBuf> {
 }
 
 /// Convert a project path like `/Users/foo/bar` to its slug `-Users-foo-bar`.
-/// Claude Code replaces `/`, spaces and non-ASCII characters (e.g. Chinese) with `-`.
+/// Claude Code replaces all non-alphanumeric characters (except `-`) with `-`.
 fn project_path_to_slug(project_path: &str) -> String {
     project_path
         .chars()
-        .map(|c| if c == '/' || c == ' ' || !c.is_ascii() { '-' } else { c })
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
         .collect()
 }
 
