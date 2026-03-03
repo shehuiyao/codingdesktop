@@ -10,6 +10,7 @@ import FileTree from "./components/FileTree";
 import SkillsPanel from "./components/SkillsPanel";
 import BranchSwitcher from "./components/BranchSwitcher";
 import CommitHistory from "./components/CommitHistory";
+import BugTrackerPanel from "./components/BugTrackerPanel";
 import TabBar, { type Tab, type CliTool } from "./components/TabBar";
 import SplitDivider from "./components/SplitDivider";
 
@@ -24,6 +25,7 @@ function App() {
   const [showFileTree, setShowFileTree] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
   const [showCommits, setShowCommits] = useState(false);
+  const [showBugTracker, setShowBugTracker] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeProject, setActiveProject] = useState<string | null>(null);
   const [workingDir, setWorkingDir] = useState<string | null>(null);
@@ -329,6 +331,12 @@ function App() {
           setShowFileTree((prev) => !prev);
           break;
         }
+        case "B": {
+          // Cmd+Shift+B 切换 Bug 看板
+          e.preventDefault();
+          setShowBugTracker((prev) => !prev);
+          break;
+        }
         case "1":
         case "2":
         case "3":
@@ -580,6 +588,11 @@ function App() {
               )}
             </div>
 
+            {/* Bug tracker panel - right side */}
+            {showBugTracker && workingDir && (
+              <BugTrackerPanel workingDir={workingDir} onClose={() => setShowBugTracker(false)} />
+            )}
+
             {/* Commit history panel - right side */}
             {showCommits && workingDir && (
               <CommitHistory key={commitRefreshKey} workingDir={workingDir} onClose={() => setShowCommits(false)} />
@@ -606,6 +619,15 @@ function App() {
           }`}
         >
           Skills
+        </button>
+        <button
+          onClick={() => setShowBugTracker(!showBugTracker)}
+          className={`px-2.5 py-0.5 text-[10px] border-t border-l border-[var(--border-subtle)] bg-[var(--bg-secondary)] cursor-pointer transition-colors duration-150 ${
+            showBugTracker ? "text-[var(--accent-red)]" : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+          }`}
+          title="Bug 看板"
+        >
+          Bugs
         </button>
         <button
           onClick={() => setShowCommits(!showCommits)}

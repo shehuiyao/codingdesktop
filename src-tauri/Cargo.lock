@@ -310,8 +310,9 @@ dependencies = [
 
 [[package]]
 name = "claude-desktop"
-version = "0.1.0"
+version = "0.8.3"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "dirs",
  "libc",

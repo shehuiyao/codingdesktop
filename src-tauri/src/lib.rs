@@ -519,6 +519,30 @@ fn get_commit_history(path: String, count: Option<u32>) -> Result<Vec<CommitEntr
 }
 
 
+// ─── Bug Tracker 数据结构 ───
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct BugEntry {
+    id: String,
+    title: String,
+    description: String,
+    reporter: String,
+    priority: String,
+    status: String,
+    images: Vec<String>,
+    fix_commit: Option<String>,
+    created: String,
+    updated: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct BugsData {
+    project: String,
+    branch: String,
+    created: String,
+    bugs: Vec<BugEntry>,
+}
+
 #[derive(serde::Serialize)]
 struct SkillInfo {
     name: String,
@@ -1001,6 +1025,124 @@ fn confirm_close(window: tauri::Window) -> Result<(), String> {
     window.destroy().map_err(|e| format!("Failed to close: {}", e))
 }
 
+// ─── Bug Tracker 命令 ───
+
+/// 根据工作目录的 git 分支名，定位 bugs.json 路径
+fn get_bugs_json_path(working_dir: &str) -> Result<std::path::PathBuf, String> {
+    let output = std::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(working_dir)
+        .output()
+        .map_err(|e| format!("无法执行 git 命令: {}", e))?;
+
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if branch.is_empty() {
+        return Err("无法获取当前 git 分支名".to_string());
+    }
+
+    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
+    let bugs_json = home
+        .join("Desktop")
+        .join("sengo")
+        .join("Task")
+        .join(&branch)
+        .join("bugs")
+        .join("bugs.json");
+
+    Ok(bugs_json)
+}
+
+#[tauri::command]
+fn list_bugs(working_dir: String) -> Result<BugsData, String> {
+    let bugs_path = get_bugs_json_path(&working_dir)?;
+
+    if !bugs_path.exists() {
+        return Ok(BugsData {
+            project: String::new(),
+            branch: String::new(),
+            created: String::new(),
+            bugs: vec![],
+        });
+    }
+
+    let content = std::fs::read_to_string(&bugs_path)
+        .map_err(|e| format!("读取 bugs.json 失败: {}", e))?;
+
+    let data: BugsData = serde_json::from_str(&content)
+        .map_err(|e| format!("解析 bugs.json 失败: {}", e))?;
+
+    Ok(data)
+}
+
+#[tauri::command]
+fn update_bug_status(working_dir: String, bug_id: String, new_status: String) -> Result<BugEntry, String> {
+    let bugs_path = get_bugs_json_path(&working_dir)?;
+
+    if !bugs_path.exists() {
+        return Err("bugs.json 不存在".to_string());
+    }
+
+    let content = std::fs::read_to_string(&bugs_path)
+        .map_err(|e| format!("读取失败: {}", e))?;
+
+    let mut data: BugsData = serde_json::from_str(&content)
+        .map_err(|e| format!("解析失败: {}", e))?;
+
+    let bug = data.bugs.iter_mut()
+        .find(|b| b.id == bug_id)
+        .ok_or(format!("未找到 Bug: {}", bug_id))?;
+
+    match new_status.as_str() {
+        "pending" | "fixing" | "fixed" => {}
+        _ => return Err(format!("无效状态: {}", new_status)),
+    }
+
+    bug.status = new_status;
+    bug.updated = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+    let updated_bug = bug.clone();
+
+    let json = serde_json::to_string_pretty(&data)
+        .map_err(|e| format!("序列化失败: {}", e))?;
+    std::fs::write(&bugs_path, json)
+        .map_err(|e| format!("写入失败: {}", e))?;
+
+    Ok(updated_bug)
+}
+
+/// 读取 bug 截图文件，返回 base64 编码的 data URI
+#[tauri::command]
+fn get_bug_image(working_dir: String, image_path: String) -> Result<String, String> {
+    let bugs_path = get_bugs_json_path(&working_dir)?;
+    let bugs_dir = bugs_path.parent()
+        .ok_or("无法获取 bugs 目录")?;
+
+    let full_path = bugs_dir.join(&image_path);
+
+    if !full_path.exists() {
+        return Err(format!("图片不存在: {}", image_path));
+    }
+
+    let bytes = std::fs::read(&full_path)
+        .map_err(|e| format!("读取图片失败: {}", e))?;
+
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+    let ext = full_path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_lowercase();
+    let mime = match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "image/png",
+    };
+
+    Ok(format!("data:{};base64,{}", mime, b64))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1043,6 +1185,9 @@ pub fn run() {
             record_skill_usage,
             get_skill_usage,
             get_usage_stats,
+            list_bugs,
+            update_bug_status,
+            get_bug_image,
         ])
         .on_window_event(|window, event| {
             match event {
