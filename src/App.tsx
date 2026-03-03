@@ -582,7 +582,7 @@ function App() {
 
             {/* Commit history panel - right side */}
             {showCommits && workingDir && (
-              <CommitHistory key={commitRefreshKey} workingDir={workingDir} />
+              <CommitHistory key={commitRefreshKey} workingDir={workingDir} onClose={() => setShowCommits(false)} />
             )}
 
             {/* File tree panel - right side */}

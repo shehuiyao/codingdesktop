@@ -525,6 +525,7 @@ struct SkillInfo {
     source: String,
     description: String,
     category: String,
+    path: String,
 }
 
 /// 从 SKILL.md frontmatter 中提取 description
@@ -604,6 +605,7 @@ fn list_skills() -> Result<Vec<SkillInfo>, String> {
                             source: "custom".to_string(),
                             description,
                             category,
+                            path: path.to_string_lossy().to_string(),
                         });
                     }
                 }
@@ -634,6 +636,7 @@ fn list_skills() -> Result<Vec<SkillInfo>, String> {
                                                             source: "plugin".to_string(),
                                                             description,
                                                             category: "official".to_string(),
+                                                            path: path.to_string_lossy().to_string(),
                                                         });
                                                     }
                                                 }

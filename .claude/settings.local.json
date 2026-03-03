@@ -9,7 +9,8 @@
       "Bash(npx tsc:*)",
       "Bash(cargo check:*)",
       "Bash(pgrep:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(defaults read:*)"
     ]
   }
 }

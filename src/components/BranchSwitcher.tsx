@@ -126,7 +126,7 @@ export default function BranchSwitcher({
         >
           <path d="M5.45 3.18a.7.7 0 0 0-.99 0L.73 6.91a.7.7 0 0 0 0 .99l3.73 3.73a.7.7 0 0 0 .99-.99L2.22 7.4l3.23-3.23a.7.7 0 0 0 0-.99zm5.1 0a.7.7 0 0 1 .99 0l3.73 3.73a.7.7 0 0 1 0 .99l-3.73 3.73a.7.7 0 0 1-.99-.99L13.78 7.4l-3.23-3.23a.7.7 0 0 1 0-.99z" />
         </svg>
-        <span>{gitInfo.branch}</span>
+        <span className="truncate max-w-[120px]">{gitInfo.branch}</span>
         <svg
           width="8"
           height="8"

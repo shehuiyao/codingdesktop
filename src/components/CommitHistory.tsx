@@ -10,9 +10,10 @@ interface CommitEntry {
 
 interface CommitHistoryProps {
   workingDir: string;
+  onClose?: () => void;
 }
 
-export default function CommitHistory({ workingDir }: CommitHistoryProps) {
+export default function CommitHistory({ workingDir, onClose }: CommitHistoryProps) {
   const [commits, setCommits] = useState<CommitEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -65,8 +66,19 @@ export default function CommitHistory({ workingDir }: CommitHistoryProps) {
 
   return (
     <div ref={containerRef} className="w-72 border-l border-[var(--border-subtle)] bg-[var(--bg-secondary)] flex flex-col overflow-hidden relative">
-      <div className="px-3 py-2 text-[10px] font-medium text-[var(--text-muted)] border-b border-[var(--border-subtle)] uppercase tracking-wider">
-        Commits
+      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-subtle)]">
+        <span className="text-[10px] font-medium text-[var(--text-muted)] uppercase tracking-wider">
+          Commits
+        </span>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="w-5 h-5 flex items-center justify-center rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors duration-150 text-[10px]"
+            title="关闭"
+          >
+            ✕
+          </button>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto py-1">
         {loading ? (

@@ -53,7 +53,7 @@ type 取值：
 ```
 feat: 技能面板支持按分类展开收起
 fix: 终端切换标签时文字被挤压，添加 resize 防抖
-chore: 移除 DMG 构建，仅生成 .app 更新包
+chore: 构建产物同时生成 DMG 安装镜像
 ```
 
 不好的示例：
@@ -88,10 +88,11 @@ npm run tauri build
 ```
 - `GITHUB_FEEDBACK_TOKEN`：用户提交反馈时自动创建 GitHub Issue（不带则反馈仅保存本地）
 - Token 存放在 `~/.claude-desktop/.github_token`，需 fine-grained PAT，仅需 Issues 写权限
-- 构建产物目录：`src-tauri/target/release/bundle/macos/`
-  - `Claude Desktop.app`（应用本体）
-  - `Claude Desktop.app.tar.gz`（更新包）
-  - `Claude Desktop.app.tar.gz.sig`（签名文件）
+- 构建产物目录：`src-tauri/target/release/bundle/`
+  - `macos/Claude Desktop.app`（应用本体）
+  - `macos/Claude Desktop.app.tar.gz`（更新包）
+  - `macos/Claude Desktop.app.tar.gz.sig`（签名文件）
+  - `dmg/Claude Desktop_X.Y.Z_aarch64.dmg`（安装镜像，可直接分发）
 
 ### 4. 生成 latest.json
 ```bash
@@ -114,6 +115,7 @@ EOF
 ```bash
 gh release create vX.Y.Z \
   "src-tauri/target/release/bundle/macos/Claude Desktop.app.tar.gz" \
+  "src-tauri/target/release/bundle/dmg/Claude Desktop_X.Y.Z_aarch64.dmg" \
   "/tmp/latest.json" \
   --title "vX.Y.Z" \
   --notes "更新内容..."

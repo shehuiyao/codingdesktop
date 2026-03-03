@@ -6,6 +6,7 @@ interface SkillInfo {
   source: string;
   description: string;
   category: string;
+  path: string;
 }
 
 interface SkillsPanelProps {
@@ -145,18 +146,36 @@ export default function SkillsPanel({ onClose, workingDir }: SkillsPanelProps) {
     <div className="absolute inset-0 z-10 flex flex-col bg-[var(--bg-primary)]">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]">
-        <span className="text-sm font-medium text-[var(--text-primary)]">
-          已安装技能
+        <span className="text-xs text-[var(--text-muted)]">
+          Skills
           {skills.length > 0 && (
-            <span className="ml-2 text-[var(--text-muted)] text-xs">({skills.length})</span>
+            <span className="ml-1.5">({skills.length})</span>
           )}
         </span>
-        <button
-          onClick={onClose}
-          className="w-6 h-6 flex items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors duration-150 text-xs"
-        >
-          ✕
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => {
+              setLoading(true);
+              invoke<SkillInfo[]>("list_skills")
+                .then(setSkills)
+                .catch(() => setSkills([]))
+                .finally(() => setLoading(false));
+            }}
+            className="w-6 h-6 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors duration-150"
+            title="刷新技能列表"
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 1v5h5M15 15v-5h-5" />
+              <path d="M13.5 6A6 6 0 0 0 3.2 3.2L1 6M2.5 10a6 6 0 0 0 10.3 2.8L15 10" />
+            </svg>
+          </button>
+          <button
+            onClick={onClose}
+            className="w-6 h-6 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors duration-150 text-xs"
+          >
+            ✕
+          </button>
+        </div>
       </div>
 
       {/* Scope 切换 */}
@@ -165,7 +184,7 @@ export default function SkillsPanel({ onClose, workingDir }: SkillsPanelProps) {
           <button
             className={`px-3 py-0.5 text-[10px] transition-colors duration-150 cursor-pointer ${
               scope === "global"
-                ? "bg-[var(--accent-blue,#60a5fa)] text-white"
+                ? "bg-[var(--bg-hover,#3f3f46)] text-[var(--text-primary)]"
                 : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
             }`}
             onClick={() => setScope("global")}
@@ -176,7 +195,7 @@ export default function SkillsPanel({ onClose, workingDir }: SkillsPanelProps) {
             <button
               className={`px-3 py-0.5 text-[10px] transition-colors duration-150 cursor-pointer border-l border-[var(--border-subtle)] ${
                 scope === "project"
-                  ? "bg-[var(--accent-blue,#60a5fa)] text-white"
+                  ? "bg-[var(--bg-hover,#3f3f46)] text-[var(--text-primary)]"
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
               }`}
               onClick={() => setScope("project")}
@@ -211,6 +230,20 @@ export default function SkillsPanel({ onClose, workingDir }: SkillsPanelProps) {
                     />
                     {group.label}
                     <span className="text-[var(--text-muted)]">({group.skills.length})</span>
+                    <button
+                      className="ml-auto shrink-0 w-5 h-5 flex items-center justify-center rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors duration-150"
+                      title="在访达中打开"
+                      onClick={() => {
+                        const first = group.skills[0];
+                        if (first?.path) {
+                          invoke("reveal_in_finder", { path: first.path });
+                        }
+                      }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M2 4h12M2 4v9a1 1 0 001 1h10a1 1 0 001-1V4M2 4l1.5-2h9L14 4" />
+                      </svg>
+                    </button>
                   </div>
                   <div className="grid gap-1.5">
                     {group.skills.map((skill) => {
@@ -270,19 +303,6 @@ export default function SkillsPanel({ onClose, workingDir }: SkillsPanelProps) {
                                 }
                                 onClick={() => toggleSkill(skill.name, projectEnabled)}
                               />
-                            )}
-                            {/* 展开箭头 */}
-                            {skill.description && (
-                              <span
-                                className="text-[10px] text-[var(--text-muted)] shrink-0 cursor-pointer transition-transform duration-150"
-                                style={{
-                                  display: "inline-block",
-                                  transform: isOpen ? "rotate(90deg)" : "rotate(0deg)",
-                                }}
-                                onClick={() => toggleExpand(skill.name)}
-                              >
-                                ▸
-                              </span>
                             )}
                           </div>
                           {isOpen && skill.description && (
