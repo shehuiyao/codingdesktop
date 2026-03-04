@@ -98,6 +98,23 @@ export default function BugTrackerPanel({ workingDir, onClose }: BugTrackerPanel
     [workingDir, loadBugs]
   );
 
+  const handlePriorityChange = useCallback(
+    (bugId: string, newPriority: string) => {
+      invoke<BugEntry>("update_bug_priority", {
+        workingDir,
+        bugId,
+        newPriority,
+      })
+        .then(() => {
+          loadBugs();
+        })
+        .catch((err) => {
+          setError(String(err));
+        });
+    },
+    [workingDir, loadBugs]
+  );
+
   const stats = bugsData
     ? {
         total: bugsData.bugs.length,
@@ -205,6 +222,7 @@ export default function BugTrackerPanel({ workingDir, onClose }: BugTrackerPanel
                 setExpandedBug(expandedBug === bug.id ? null : bug.id)
               }
               onStatusChange={handleStatusChange}
+              onPriorityChange={handlePriorityChange}
               workingDir={workingDir}
               onPreviewImage={setPreviewImage}
             />
@@ -243,6 +261,7 @@ function BugCard({
   expanded,
   onToggle,
   onStatusChange,
+  onPriorityChange,
   workingDir,
   onPreviewImage,
 }: {
@@ -250,11 +269,13 @@ function BugCard({
   expanded: boolean;
   onToggle: () => void;
   onStatusChange: (bugId: string, newStatus: string) => void;
+  onPriorityChange: (bugId: string, newPriority: string) => void;
   workingDir: string;
   onPreviewImage: (dataUri: string) => void;
 }) {
   const [thumbnails, setThumbnails] = useState<string[]>([]);
   const [loadingImages, setLoadingImages] = useState(false);
+  const [showPriorityMenu, setShowPriorityMenu] = useState(false);
 
   useEffect(() => {
     if (!expanded || bug.images.length === 0) {
@@ -284,12 +305,44 @@ function BugCard({
               <span className="font-mono text-[10px] text-[var(--text-muted)]">
                 {bug.id}
               </span>
-              <span
-                className={`text-[10px] px-1 py-0.5 rounded font-semibold ${
-                  PRIORITY_COLORS[bug.priority] || ""
-                }`}
-              >
-                {bug.priority}
+              <span className="relative">
+                <button
+                  className={`text-[10px] px-1 py-0.5 rounded font-semibold cursor-pointer hover:ring-1 hover:ring-current transition-all duration-150 ${
+                    PRIORITY_COLORS[bug.priority] || ""
+                  }`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowPriorityMenu(!showPriorityMenu);
+                  }}
+                  title="点击切换优先级"
+                >
+                  {bug.priority}
+                </button>
+                {showPriorityMenu && (
+                  <div
+                    className="absolute top-full left-0 mt-1 z-20 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded shadow-lg py-0.5"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {["P0", "P1", "P2", "P3"].map((p) => (
+                      <button
+                        key={p}
+                        className={`block w-full text-left text-[10px] px-3 py-1 cursor-pointer transition-colors duration-100 ${
+                          p === bug.priority
+                            ? "bg-[var(--bg-hover)] font-bold"
+                            : "hover:bg-[var(--bg-hover)]"
+                        } ${PRIORITY_COLORS[p] || ""}`}
+                        onClick={() => {
+                          if (p !== bug.priority) {
+                            onPriorityChange(bug.id, p);
+                          }
+                          setShowPriorityMenu(false);
+                        }}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </span>
             </div>
             <div className="text-xs text-[var(--text-primary)] mt-0.5 truncate">

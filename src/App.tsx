@@ -520,6 +520,7 @@ function App() {
                           workingDir={tab.workingDir}
                           yolo={tab.yolo}
                           tool={tab.tool}
+                          isActive={isActive}
                           onSessionStarted={(sessionId) => handleSessionStarted(tab.id, sessionId)}
                           onError={() => updateTabStatus(tab.id, "error")}
                         />

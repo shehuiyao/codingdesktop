@@ -13,6 +13,7 @@ interface LiveTerminalProps {
   workingDir: string;
   yolo?: boolean;
   tool?: CliTool;
+  isActive?: boolean;
   onSessionStarted?: (id: string) => void;
   onError?: (error: string) => void;
 }
@@ -66,11 +67,14 @@ function getTerminalTheme(isDark: boolean) {
   };
 }
 
-export default function LiveTerminal({ workingDir, yolo, tool, onSessionStarted, onError }: LiveTerminalProps) {
+export default function LiveTerminal({ workingDir, yolo, tool, isActive = true, onSessionStarted, onError }: LiveTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
+  const recordedSkillsRef = useRef<Set<string>>(new Set());
   const onSessionStartedRef = useRef(onSessionStarted);
   onSessionStartedRef.current = onSessionStarted;
   const onErrorRef = useRef(onError);
@@ -79,13 +83,16 @@ export default function LiveTerminal({ workingDir, yolo, tool, onSessionStarted,
   const [starting, setStarting] = useState(true);
   const [isDragOver, setIsDragOver] = useState(false);
 
-  // 使用 Tauri 原生拖放事件处理文件拖入（支持所有文件类型）
+  // 使用 Tauri 原生拖放事件处理文件拖入（只在当前活跃终端响应）
   useEffect(() => {
     const webview = getCurrentWebview();
     const unlisteners: (() => void)[] = [];
 
     const setup = async () => {
       const dragUn = await webview.onDragDropEvent((event) => {
+        // 只有当前活跃的终端才处理拖放事件
+        if (!isActiveRef.current) return;
+
         if (event.payload.type === "over") {
           setIsDragOver(true);
         } else if (event.payload.type === "leave") {
@@ -174,9 +181,11 @@ export default function LiveTerminal({ workingDir, yolo, tool, onSessionStarted,
           hasReceivedOutput = true;
           term!.write(event.payload.data);
           // 检测技能调用，记录使用次数（格式: Skill(skill-name)）
+          // 每个 session 每个技能只计一次，避免终端重绘导致重复计数
           const clean = event.payload.data.replace(/\x1b\[[\d;]*[A-Za-z]|\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "");
           const m = clean.match(/Skill\(([^)]+)\)/);
-          if (m && /^[\w\-:.]+$/.test(m[1])) {
+          if (m && /^[\w\-:.]+$/.test(m[1]) && !recordedSkillsRef.current.has(m[1])) {
+            recordedSkillsRef.current.add(m[1]);
             invoke("record_skill_usage", { skillName: m[1] }).catch(() => {});
           }
         }

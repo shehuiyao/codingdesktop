@@ -541,6 +541,8 @@ struct BugsData {
     branch: String,
     created: String,
     bugs: Vec<BugEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    project_root: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -1027,6 +1029,20 @@ fn confirm_close(window: tauri::Window) -> Result<(), String> {
 
 // ─── Bug Tracker 命令 ───
 
+/// 获取 git 项目根目录
+fn get_git_toplevel(working_dir: &str) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(working_dir)
+        .output()
+        .map_err(|e| format!("无法执行 git 命令: {}", e))?;
+    let toplevel = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if toplevel.is_empty() {
+        return Err("无法获取 git 项目根目录".to_string());
+    }
+    Ok(toplevel)
+}
+
 /// 根据工作目录的 git 分支名，定位 bugs.json 路径
 fn get_bugs_json_path(working_dir: &str) -> Result<std::path::PathBuf, String> {
     let output = std::process::Command::new("git")
@@ -1056,13 +1072,16 @@ fn get_bugs_json_path(working_dir: &str) -> Result<std::path::PathBuf, String> {
 fn list_bugs(working_dir: String) -> Result<BugsData, String> {
     let bugs_path = get_bugs_json_path(&working_dir)?;
 
+    let empty = BugsData {
+        project: String::new(),
+        branch: String::new(),
+        created: String::new(),
+        bugs: vec![],
+        project_root: None,
+    };
+
     if !bugs_path.exists() {
-        return Ok(BugsData {
-            project: String::new(),
-            branch: String::new(),
-            created: String::new(),
-            bugs: vec![],
-        });
+        return Ok(empty);
     }
 
     let content = std::fs::read_to_string(&bugs_path)
@@ -1070,6 +1089,15 @@ fn list_bugs(working_dir: String) -> Result<BugsData, String> {
 
     let data: BugsData = serde_json::from_str(&content)
         .map_err(|e| format!("解析 bugs.json 失败: {}", e))?;
+
+    // 校验项目归属：如果 bugs.json 记录了 project_root，则只在匹配时返回数据
+    if let Some(ref stored_root) = data.project_root {
+        if let Ok(current_root) = get_git_toplevel(&working_dir) {
+            if stored_root != &current_root {
+                return Ok(empty);
+            }
+        }
+    }
 
     Ok(data)
 }
@@ -1098,6 +1126,42 @@ fn update_bug_status(working_dir: String, bug_id: String, new_status: String) ->
     }
 
     bug.status = new_status;
+    bug.updated = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+    let updated_bug = bug.clone();
+
+    let json = serde_json::to_string_pretty(&data)
+        .map_err(|e| format!("序列化失败: {}", e))?;
+    std::fs::write(&bugs_path, json)
+        .map_err(|e| format!("写入失败: {}", e))?;
+
+    Ok(updated_bug)
+}
+
+#[tauri::command]
+fn update_bug_priority(working_dir: String, bug_id: String, new_priority: String) -> Result<BugEntry, String> {
+    let bugs_path = get_bugs_json_path(&working_dir)?;
+
+    if !bugs_path.exists() {
+        return Err("bugs.json 不存在".to_string());
+    }
+
+    let content = std::fs::read_to_string(&bugs_path)
+        .map_err(|e| format!("读取失败: {}", e))?;
+
+    let mut data: BugsData = serde_json::from_str(&content)
+        .map_err(|e| format!("解析失败: {}", e))?;
+
+    let bug = data.bugs.iter_mut()
+        .find(|b| b.id == bug_id)
+        .ok_or(format!("未找到 Bug: {}", bug_id))?;
+
+    match new_priority.as_str() {
+        "P0" | "P1" | "P2" | "P3" => {}
+        _ => return Err(format!("无效优先级: {}", new_priority)),
+    }
+
+    bug.priority = new_priority;
     bug.updated = chrono::Local::now().format("%Y-%m-%d").to_string();
 
     let updated_bug = bug.clone();
@@ -1187,6 +1251,7 @@ pub fn run() {
             get_usage_stats,
             list_bugs,
             update_bug_status,
+            update_bug_priority,
             get_bug_image,
         ])
         .on_window_event(|window, event| {
