@@ -10,7 +10,15 @@
       "Bash(cargo check:*)",
       "Bash(pgrep:*)",
       "Bash(rm:*)",
-      "Bash(defaults read:*)"
+      "Bash(defaults read:*)",
+      "Bash(python3:*)",
+      "Bash(do:*)",
+      "Bash(cp:*)",
+      "Bash(test:*)",
+      "Bash(bash:*)",
+      "Bash(crontab:*)",
+      "Skill(xy-bug-track)",
+      "Bash(ls:*)"
     ]
   }
 }

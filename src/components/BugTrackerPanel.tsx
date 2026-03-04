@@ -59,6 +59,7 @@ export default function BugTrackerPanel({ workingDir, onClose }: BugTrackerPanel
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterType>("all");
   const [expandedBug, setExpandedBug] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const loadBugs = useCallback(() => {
     invoke<BugsData>("list_bugs", { workingDir })
@@ -204,10 +205,34 @@ export default function BugTrackerPanel({ workingDir, onClose }: BugTrackerPanel
                 setExpandedBug(expandedBug === bug.id ? null : bug.id)
               }
               onStatusChange={handleStatusChange}
+              workingDir={workingDir}
+              onPreviewImage={setPreviewImage}
             />
           ))
         )}
       </div>
+
+      {/* 图片预览弹层 */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="relative max-w-[80vw] max-h-[80vh]" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={previewImage}
+              alt="Bug 截图预览"
+              className="max-w-full max-h-[80vh] rounded-lg shadow-2xl object-contain"
+            />
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="absolute -top-3 -right-3 w-7 h-7 rounded-full bg-[var(--bg-secondary)] border border-[var(--border-subtle)] flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors text-sm"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -218,12 +243,34 @@ function BugCard({
   expanded,
   onToggle,
   onStatusChange,
+  workingDir,
+  onPreviewImage,
 }: {
   bug: BugEntry;
   expanded: boolean;
   onToggle: () => void;
   onStatusChange: (bugId: string, newStatus: string) => void;
+  workingDir: string;
+  onPreviewImage: (dataUri: string) => void;
 }) {
+  const [thumbnails, setThumbnails] = useState<string[]>([]);
+  const [loadingImages, setLoadingImages] = useState(false);
+
+  useEffect(() => {
+    if (!expanded || bug.images.length === 0) {
+      setThumbnails([]);
+      return;
+    }
+    setLoadingImages(true);
+    Promise.all(
+      bug.images.map((imgPath) =>
+        invoke<string>("get_bug_image", { workingDir, imagePath: imgPath }).catch(() => "")
+      )
+    ).then((results) => {
+      setThumbnails(results.filter(Boolean));
+      setLoadingImages(false);
+    });
+  }, [expanded, bug.images, workingDir]);
   return (
     <div
       className="border-b border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] transition-colors duration-100 cursor-pointer"
@@ -287,8 +334,25 @@ function BugCard({
           </div>
 
           {bug.images.length > 0 && (
-            <div className="mt-2 text-[10px] text-[var(--text-muted)]">
-              {bug.images.length} 张截图
+            <div className="mt-2">
+              <div className="text-[10px] text-[var(--text-muted)] mb-1">
+                {bug.images.length} 张截图
+              </div>
+              {loadingImages ? (
+                <div className="text-[10px] text-[var(--text-muted)]">加载中...</div>
+              ) : (
+                <div className="flex gap-1.5 flex-wrap">
+                  {thumbnails.map((dataUri, idx) => (
+                    <img
+                      key={idx}
+                      src={dataUri}
+                      alt={`${bug.id} 截图 ${idx + 1}`}
+                      className="w-20 h-14 object-cover rounded border border-[var(--border-subtle)] cursor-pointer hover:border-[var(--accent-cyan)] hover:opacity-90 transition-all duration-150"
+                      onClick={() => onPreviewImage(dataUri)}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
