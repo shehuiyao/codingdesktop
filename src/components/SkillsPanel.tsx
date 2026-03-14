@@ -310,6 +310,17 @@ export default function SkillsPanel({ onClose, workingDir }: SkillsPanelProps) {
                               <div className="text-[11px] leading-relaxed text-[var(--text-secondary)] pl-5 border-l-2 border-[var(--border-subtle)] ml-[3px]">
                                 {skill.description}
                               </div>
+                              {skill.path && (
+                                <button
+                                  onClick={() => invoke("reveal_in_finder", { path: skill.path })}
+                                  className="mt-1.5 ml-5 text-[10px] text-[var(--text-muted)] hover:text-[var(--accent-cyan)] cursor-pointer transition-colors duration-150 flex items-center gap-1"
+                                >
+                                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M2 4h12M2 4v9a1 1 0 001 1h10a1 1 0 001-1V4M2 4l1.5-2h9L14 4" />
+                                  </svg>
+                                  在访达中打开
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>
