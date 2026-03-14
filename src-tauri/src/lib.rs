@@ -322,23 +322,53 @@ fn get_git_info(path: String) -> Result<GitInfo, String> {
     let mut additions: i64 = 0;
     let mut deletions: i64 = 0;
 
-    // git diff --numstat HEAD 包含 staged + unstaged 所有变更
-    let diff_output = Command::new("git")
+    // 统计当前分支相对于 main/master 的全部改动（已提交 + 未提交）
+    // 先找到默认分支（origin/main 或 origin/master）
+    let default_branch = {
+        let check_main = Command::new("git")
+            .args(["rev-parse", "--verify", "origin/main"])
+            .current_dir(&path)
+            .output();
+        if check_main.map(|o| o.status.success()).unwrap_or(false) {
+            "origin/main"
+        } else {
+            "origin/master"
+        }
+    };
+
+    // git diff --numstat <default_branch>...HEAD: 分支上的已提交改动
+    let branch_diff = Command::new("git")
+        .args(["diff", "--numstat", &format!("{}...HEAD", default_branch)])
+        .current_dir(&path)
+        .output();
+
+    if let Ok(output) = branch_diff {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            for line in text.lines() {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.len() >= 2 {
+                    if let Ok(add) = parts[0].parse::<i64>() { additions += add; }
+                    if let Ok(del) = parts[1].parse::<i64>() { deletions += del; }
+                }
+            }
+        }
+    }
+
+    // git diff --numstat HEAD: 未提交的改动（staged + unstaged）
+    let uncommitted_diff = Command::new("git")
         .args(["diff", "--numstat", "HEAD"])
         .current_dir(&path)
-        .output()
-        .map_err(|e| format!("Failed to run git diff: {}", e))?;
+        .output();
 
-    if diff_output.status.success() {
-        let diff_text = String::from_utf8_lossy(&diff_output.stdout);
-        for line in diff_text.lines() {
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 2 {
-                if let Ok(add) = parts[0].parse::<i64>() {
-                    additions += add;
-                }
-                if let Ok(del) = parts[1].parse::<i64>() {
-                    deletions += del;
+    if let Ok(output) = uncommitted_diff {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            for line in text.lines() {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.len() >= 2 {
+                    if let Ok(add) = parts[0].parse::<i64>() { additions += add; }
+                    if let Ok(del) = parts[1].parse::<i64>() { deletions += del; }
                 }
             }
         }
@@ -350,12 +380,8 @@ fn get_git_info(path: String) -> Result<GitInfo, String> {
                 for line in text.lines() {
                     let parts: Vec<&str> = line.split('\t').collect();
                     if parts.len() >= 2 {
-                        if let Ok(add) = parts[0].parse::<i64>() {
-                            additions += add;
-                        }
-                        if let Ok(del) = parts[1].parse::<i64>() {
-                            deletions += del;
-                        }
+                        if let Ok(add) = parts[0].parse::<i64>() { additions += add; }
+                        if let Ok(del) = parts[1].parse::<i64>() { deletions += del; }
                     }
                 }
             }
@@ -1139,7 +1165,7 @@ fn update_bug_status(working_dir: String, bug_id: String, new_status: String) ->
         .ok_or(format!("未找到 Bug: {}", bug_id))?;
 
     match new_status.as_str() {
-        "pending" | "fixing" | "fixed" => {}
+        "pending" | "fixing" | "fixed" | "shelved" => {}
         _ => return Err(format!("无效状态: {}", new_status)),
     }
 

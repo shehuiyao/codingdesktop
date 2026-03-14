@@ -147,9 +147,12 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
         allowProposedApi: true,
       });
 
-      // IME 组合期间不让 xterm 拦截按键，保证中文标点（如：、；等）能正常输入
+      // IME 组合进行中屏蔽原始按键，防止拼音字母被当作输入发送
+      // 只检查 isComposing，不检查 keyCode===229：
+      // 中文标点（：？」等）由 IME 直接插入，不走 composition 流程，
+      // 此时 isComposing=false 但 keyCode=229，必须放行让 xterm 读取
       term.attachCustomKeyEventHandler((e) => {
-        if (e.isComposing || e.keyCode === 229) return false;
+        if (e.isComposing) return false;
         return true;
       });
 

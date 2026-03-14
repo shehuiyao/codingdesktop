@@ -430,8 +430,8 @@ function App() {
           />
         )}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Header bar */}
-          <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)] flex-nowrap min-w-0">
+          {/* Header bar — relative z-20 让分支下拉菜单浮在右侧面板上方 */}
+          <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)] flex-nowrap min-w-0 relative z-20">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
               className="w-6 h-6 flex flex-col items-center justify-center gap-[3px] rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors duration-150"

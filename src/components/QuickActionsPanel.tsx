@@ -74,7 +74,7 @@ export default function QuickActionsPanel({ workingDir, onClose, onSendCommand }
   }, [onSendCommand, loadActions]);
 
   return (
-    <div className="w-56 border-l border-[var(--border-subtle)] bg-[var(--bg-secondary)] flex flex-col h-full overflow-hidden">
+    <div className="w-56 border-l border-[var(--border-subtle)] bg-[var(--bg-secondary)] flex flex-col h-full">
       {/* 头部 */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-subtle)] shrink-0">
         <span className="text-[10px] font-medium text-[var(--text-muted)] uppercase tracking-wider">
@@ -106,6 +106,7 @@ export default function QuickActionsPanel({ workingDir, onClose, onSendCommand }
               return (
                 <div key={idx} className="relative">
                   <button
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={() => onSendCommand(action.command)}
                     onMouseEnter={() => setHoveredIdx(idx)}
                     onMouseLeave={() => setHoveredIdx(null)}
