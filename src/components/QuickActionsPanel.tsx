@@ -74,7 +74,7 @@ export default function QuickActionsPanel({ workingDir, onClose, onSendCommand }
   }, [onSendCommand, loadActions]);
 
   return (
-    <div className="w-56 border-l border-[var(--border-subtle)] bg-[var(--bg-secondary)] flex flex-col h-full relative z-10">
+    <div className="w-56 border-l border-[var(--border-subtle)] bg-[var(--bg-secondary)] flex flex-col h-full">
       {/* 头部 */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-subtle)] shrink-0">
         <span className="text-[10px] font-medium text-[var(--text-muted)] uppercase tracking-wider">
@@ -100,12 +100,13 @@ export default function QuickActionsPanel({ workingDir, onClose, onSendCommand }
             暂无快捷操作
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-1.5">
-            {actions.map((action, idx) => {
-              const accentColor = COLOR_MAP[action.color] || "var(--text-secondary)";
-              return (
-                <div key={idx} className="relative">
+          <>
+            <div className="grid grid-cols-2 gap-1.5">
+              {actions.map((action, idx) => {
+                const accentColor = COLOR_MAP[action.color] || "var(--text-secondary)";
+                return (
                   <button
+                    key={idx}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => onSendCommand(action.command)}
                     onMouseEnter={() => setHoveredIdx(idx)}
@@ -118,17 +119,17 @@ export default function QuickActionsPanel({ workingDir, onClose, onSendCommand }
                       {action.label}
                     </span>
                   </button>
-                  {hoveredIdx === idx && (
-                    <div className="absolute z-50 right-full top-0 mr-2 w-48 p-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-color)] shadow-lg shadow-black/20 pointer-events-none">
-                      <div className="text-[11px] font-medium text-[var(--text-primary)] mb-1">{action.label}</div>
-                      <div className="text-[10px] text-[var(--text-secondary)] mb-1.5">{action.description}</div>
-                      <div className="text-[10px] text-[var(--text-muted)] font-mono truncate">{action.command}</div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+            {hoveredIdx !== null && actions[hoveredIdx] && (
+              <div className="mt-2 px-2 py-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-color)]">
+                <div className="text-[11px] font-medium text-[var(--text-primary)] mb-1">{actions[hoveredIdx].label}</div>
+                <div className="text-[10px] text-[var(--text-secondary)] mb-1">{actions[hoveredIdx].description}</div>
+                <div className="text-[10px] text-[var(--text-muted)] font-mono truncate">{actions[hoveredIdx].command}</div>
+              </div>
+            )}
+          </>
         )}
       </div>
 

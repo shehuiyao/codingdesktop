@@ -147,11 +147,6 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
         allowProposedApi: true,
       });
 
-      // xterm v6 内置 CompositionHelper 已能正确处理 IME：
-      // 拼音组合期间自动屏蔽原始字母，compositionend 时输出最终文字。
-      // 不需要 attachCustomKeyEventHandler，手动拦截反而会干扰
-      // Shift+标点等 isComposing=true 的快速组合事件。
-
       fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
 
@@ -164,6 +159,28 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
       }
 
       term.open(containerRef.current!);
+
+      // IME 输入处理：通过 compositionstart/compositionend 精确追踪组合状态，
+      // 只在真正进入拼音组合后才拦截 keydown，防止原始字母泄漏到终端。
+      // Shift+标点等不经过 compositionstart 的快速输入不会被误拦。
+      const xtermTextarea = term.textarea;
+      if (xtermTextarea) {
+        let inActiveComposition = false;
+        const onCompStart = () => { inActiveComposition = true; };
+        const onCompEnd = () => {
+          setTimeout(() => { inActiveComposition = false; }, 0);
+        };
+        xtermTextarea.addEventListener('compositionstart', onCompStart);
+        xtermTextarea.addEventListener('compositionend', onCompEnd);
+        unlisteners.push(() => {
+          xtermTextarea.removeEventListener('compositionstart', onCompStart);
+          xtermTextarea.removeEventListener('compositionend', onCompEnd);
+        });
+        term.attachCustomKeyEventHandler((e) => {
+          if (inActiveComposition && e.type === 'keydown') return false;
+          return true;
+        });
+      }
 
       // Set activeVersion AFTER open()
       try {
@@ -189,8 +206,21 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
 
       const flushOutputBuffer = () => {
         if (outputBuffer && term) {
+          // 写入前记住滚动位置，大量输出可能触发 scrollback 裁剪导致跳顶
+          const buf = term.buffer.active;
+          const wasAtBottom = buf.viewportY >= buf.baseY;
+          const linesFromBottom = buf.baseY - buf.viewportY;
           term.write(outputBuffer);
           outputBuffer = "";
+          // 用户往上翻了时恢复位置
+          if (!wasAtBottom) {
+            const newBaseY = term.buffer.active.baseY;
+            const targetY = Math.max(0, newBaseY - linesFromBottom);
+            const currentY = term.buffer.active.viewportY;
+            if (currentY !== targetY) {
+              term.scrollLines(targetY - currentY);
+            }
+          }
         }
         outputFlushId = null;
       };
@@ -315,9 +345,18 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
           // 记住滚动位置，fit() 后恢复，防止跳到顶部
           const buf = term!.buffer.active;
           const wasAtBottom = buf.viewportY >= buf.baseY;
+          const linesFromBottom = buf.baseY - buf.viewportY;
           fitAddon!.fit();
           if (wasAtBottom) {
             term!.scrollToBottom();
+          } else {
+            // 用户往上翻了，保持与底部的距离不变
+            const newBaseY = term!.buffer.active.baseY;
+            const targetY = Math.max(0, newBaseY - linesFromBottom);
+            const currentY = term!.buffer.active.viewportY;
+            if (currentY !== targetY) {
+              term!.scrollLines(targetY - currentY);
+            }
           }
           if (sessionIdRef.current) {
             const cols = term!.cols;
@@ -325,8 +364,9 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
             invoke("resize_session", { sessionId: sessionIdRef.current, rows, cols }).catch(() => {});
           }
           // 从隐藏变为可见时自动聚焦终端（tab 切换场景）
+          // 使用 preventScroll 防止浏览器聚焦 textarea 时触发滚动跳转
           if (wasHidden) {
-            term!.focus();
+            term!.textarea?.focus({ preventScroll: true });
           }
           wasHidden = false;
         }, 50);
