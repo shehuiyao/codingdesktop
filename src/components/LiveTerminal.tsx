@@ -190,6 +190,10 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
 
       // Track whether any output has been received (for frontend timeout warning)
       let hasReceivedOutput = false;
+      let lastMeasuredWidth = 0;
+      let lastMeasuredHeight = 0;
+      let lastSentRows = 0;
+      let lastSentCols = 0;
 
       // Register listeners BEFORE starting session
       // 缓冲 pty 输出，用 requestAnimationFrame 合并写入，防止高频输出导致 UI 卡死
@@ -302,6 +306,8 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
         const cols = term.cols;
         const rows = term.rows;
         await invoke("resize_session", { sessionId: id, rows, cols });
+        lastSentRows = rows;
+        lastSentCols = cols;
 
         const dataDisposable = term.onData((data) => {
           // IME 组合期间不发送原始按键，防止切换输入法时重复输入
@@ -336,6 +342,7 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
 
       // Handle resize — debounce to avoid fitting with stale dimensions during tab switch
       let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+      let ptyResizeTimer: ReturnType<typeof setTimeout> | null = null;
       let wasHidden = true;
       observer = new ResizeObserver(() => {
         if (resizeTimer) clearTimeout(resizeTimer);
@@ -345,6 +352,14 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
             wasHidden = true;
             return;
           }
+          const nextWidth = el.offsetWidth;
+          const nextHeight = el.offsetHeight;
+          const sizeChanged = nextWidth !== lastMeasuredWidth || nextHeight !== lastMeasuredHeight;
+          if (!sizeChanged && !wasHidden) {
+            return;
+          }
+          lastMeasuredWidth = nextWidth;
+          lastMeasuredHeight = nextHeight;
           // 记住滚动位置，fit() 后恢复，防止跳到顶部
           const buf = term!.buffer.active;
           const wasAtBottom = buf.viewportY >= buf.baseY;
@@ -359,7 +374,18 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
           if (sessionIdRef.current) {
             const cols = term!.cols;
             const rows = term!.rows;
-            invoke("resize_session", { sessionId: sessionIdRef.current, rows, cols }).catch(() => {});
+            const terminalSizeChanged = rows !== lastSentRows || cols !== lastSentCols;
+            if (terminalSizeChanged) {
+              if (ptyResizeTimer) clearTimeout(ptyResizeTimer);
+              ptyResizeTimer = setTimeout(() => {
+                if (!sessionIdRef.current) return;
+                if (rows === lastSentRows && cols === lastSentCols) return;
+                invoke("resize_session", { sessionId: sessionIdRef.current, rows, cols }).catch(() => {});
+                lastSentRows = rows;
+                lastSentCols = cols;
+                ptyResizeTimer = null;
+              }, 120);
+            }
           }
           // 从隐藏变为可见时自动聚焦终端（tab 切换场景）
           // 使用 preventScroll 防止浏览器聚焦 textarea 时触发滚动跳转
@@ -370,7 +396,10 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
         }, 50);
       });
       observer.observe(containerRef.current!);
-      unlisteners.push(() => { if (resizeTimer) clearTimeout(resizeTimer); });
+      unlisteners.push(() => {
+        if (resizeTimer) clearTimeout(resizeTimer);
+        if (ptyResizeTimer) clearTimeout(ptyResizeTimer);
+      });
     };
 
     setup();
