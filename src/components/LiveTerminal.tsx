@@ -147,14 +147,10 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
         allowProposedApi: true,
       });
 
-      // IME 组合进行中屏蔽原始按键，防止拼音字母被当作输入发送
-      // 只检查 isComposing，不检查 keyCode===229：
-      // 中文标点（：？」等）由 IME 直接插入，不走 composition 流程，
-      // 此时 isComposing=false 但 keyCode=229，必须放行让 xterm 读取
-      term.attachCustomKeyEventHandler((e) => {
-        if (e.isComposing) return false;
-        return true;
-      });
+      // xterm v6 内置 CompositionHelper 已能正确处理 IME：
+      // 拼音组合期间自动屏蔽原始字母，compositionend 时输出最终文字。
+      // 不需要 attachCustomKeyEventHandler，手动拦截反而会干扰
+      // Shift+标点等 isComposing=true 的快速组合事件。
 
       fitAddon = new FitAddon();
       term.loadAddon(fitAddon);

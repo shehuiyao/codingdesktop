@@ -141,7 +141,7 @@ export default function BranchSwitcher({
       </button>
 
       {open && (
-        <div className="absolute top-full left-0 mt-1 z-50 min-w-[220px] bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg shadow-xl overflow-hidden">
+        <div className="absolute top-full right-0 mt-1 z-50 min-w-[220px] bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg shadow-xl overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-subtle)]">
             <span className="text-[10px] font-medium text-[var(--text-muted)] uppercase tracking-wider">

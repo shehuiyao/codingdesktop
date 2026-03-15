@@ -74,7 +74,7 @@ export default function QuickActionsPanel({ workingDir, onClose, onSendCommand }
   }, [onSendCommand, loadActions]);
 
   return (
-    <div className="w-56 border-l border-[var(--border-subtle)] bg-[var(--bg-secondary)] flex flex-col h-full">
+    <div className="w-56 border-l border-[var(--border-subtle)] bg-[var(--bg-secondary)] flex flex-col h-full relative z-10">
       {/* 头部 */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-subtle)] shrink-0">
         <span className="text-[10px] font-medium text-[var(--text-muted)] uppercase tracking-wider">
