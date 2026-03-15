@@ -160,25 +160,19 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
 
       term.open(containerRef.current!);
 
-      // IME 输入处理：通过 compositionstart/compositionend 精确追踪组合状态，
-      // 只在真正进入拼音组合后才拦截 keydown，防止原始字母泄漏到终端。
-      // Shift+标点等不经过 compositionstart 的快速输入不会被误拦。
+      // IME 输入处理：不使用 attachCustomKeyEventHandler（会干扰 Shift+标点），
+      // 改为在 onData 层过滤组合期间的原始字母，防止切换输入法时重复输入。
+      // compositionstart 先于 xterm 内部 handler 注册，确保状态在 onData 前更新。
+      let imeComposing = false;
       const xtermTextarea = term.textarea;
       if (xtermTextarea) {
-        let inActiveComposition = false;
-        const onCompStart = () => { inActiveComposition = true; };
-        const onCompEnd = () => {
-          setTimeout(() => { inActiveComposition = false; }, 0);
-        };
+        const onCompStart = () => { imeComposing = true; };
+        const onCompEnd = () => { imeComposing = false; };
         xtermTextarea.addEventListener('compositionstart', onCompStart);
         xtermTextarea.addEventListener('compositionend', onCompEnd);
         unlisteners.push(() => {
           xtermTextarea.removeEventListener('compositionstart', onCompStart);
           xtermTextarea.removeEventListener('compositionend', onCompEnd);
-        });
-        term.attachCustomKeyEventHandler((e) => {
-          if (inActiveComposition && e.type === 'keydown') return false;
-          return true;
         });
       }
 
@@ -204,23 +198,29 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
       let skillCheckBuffer = "";
       let skillCheckTimer: ReturnType<typeof setTimeout> | null = null;
 
+      const restoreViewport = (linesFromBottom: number) => {
+        const newBaseY = term!.buffer.active.baseY;
+        const targetY = Math.max(0, newBaseY - linesFromBottom);
+        term!.scrollToLine(targetY);
+      };
+
       const flushOutputBuffer = () => {
         if (outputBuffer && term) {
           // 写入前记住滚动位置，大量输出可能触发 scrollback 裁剪导致跳顶
           const buf = term.buffer.active;
           const wasAtBottom = buf.viewportY >= buf.baseY;
           const linesFromBottom = buf.baseY - buf.viewportY;
-          term.write(outputBuffer);
+          const pendingOutput = outputBuffer;
           outputBuffer = "";
-          // 用户往上翻了时恢复位置
-          if (!wasAtBottom) {
-            const newBaseY = term.buffer.active.baseY;
-            const targetY = Math.max(0, newBaseY - linesFromBottom);
-            const currentY = term.buffer.active.viewportY;
-            if (currentY !== targetY) {
-              term.scrollLines(targetY - currentY);
+
+          // xterm.write 是异步写入，必须在回调里恢复 viewport 才能读到新 buffer 状态
+          term.write(pendingOutput, () => {
+            if (wasAtBottom) {
+              term!.scrollToBottom();
+            } else {
+              restoreViewport(linesFromBottom);
             }
-          }
+          });
         }
         outputFlushId = null;
       };
@@ -304,6 +304,9 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
         await invoke("resize_session", { sessionId: id, rows, cols });
 
         const dataDisposable = term.onData((data) => {
+          // IME 组合期间不发送原始按键，防止切换输入法时重复输入
+          // compositionend 后 imeComposing=false，最终文字正常发送
+          if (imeComposing) return;
           if (sessionIdRef.current) {
             invoke("send_input", { sessionId: sessionIdRef.current, data }).catch(() => {});
           }
@@ -351,12 +354,7 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
             term!.scrollToBottom();
           } else {
             // 用户往上翻了，保持与底部的距离不变
-            const newBaseY = term!.buffer.active.baseY;
-            const targetY = Math.max(0, newBaseY - linesFromBottom);
-            const currentY = term!.buffer.active.viewportY;
-            if (currentY !== targetY) {
-              term!.scrollLines(targetY - currentY);
-            }
+            restoreViewport(linesFromBottom);
           }
           if (sessionIdRef.current) {
             const cols = term!.cols;

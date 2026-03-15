@@ -28,6 +28,7 @@ export default function QuickActionsPanel({ workingDir, onClose, onSendCommand }
   const [actions, setActions] = useState<QuickAction[]>([]);
   const [loading, setLoading] = useState(true);
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+  const [tooltipTop, setTooltipTop] = useState(0);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadActions = useCallback(() => {
@@ -90,7 +91,7 @@ export default function QuickActionsPanel({ workingDir, onClose, onSendCommand }
       </div>
 
       {/* 按钮网格 */}
-      <div className="flex-1 overflow-y-auto p-2">
+      <div className="flex-1 overflow-y-auto p-2 relative">
         {loading ? (
           <div className="text-center py-8 text-[var(--text-muted)] text-xs">
             加载中...
@@ -109,7 +110,15 @@ export default function QuickActionsPanel({ workingDir, onClose, onSendCommand }
                     key={idx}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => onSendCommand(action.command)}
-                    onMouseEnter={() => setHoveredIdx(idx)}
+                    onMouseEnter={(e) => {
+                      setHoveredIdx(idx);
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const container = e.currentTarget.closest('.overflow-y-auto');
+                      if (container) {
+                        const cRect = container.getBoundingClientRect();
+                        setTooltipTop(rect.bottom - cRect.top + container.scrollTop);
+                      }
+                    }}
                     onMouseLeave={() => setHoveredIdx(null)}
                     className="w-full flex flex-col items-center gap-1 py-2.5 px-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] hover:bg-[var(--bg-hover)] hover:border-current cursor-pointer transition-all duration-150 group"
                     style={{ color: accentColor }}
@@ -123,10 +132,13 @@ export default function QuickActionsPanel({ workingDir, onClose, onSendCommand }
               })}
             </div>
             {hoveredIdx !== null && actions[hoveredIdx] && (
-              <div className="mt-2 px-2 py-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-color)]">
-                <div className="text-[11px] font-medium text-[var(--text-primary)] mb-1">{actions[hoveredIdx].label}</div>
-                <div className="text-[10px] text-[var(--text-secondary)] mb-1">{actions[hoveredIdx].description}</div>
-                <div className="text-[10px] text-[var(--text-muted)] font-mono truncate">{actions[hoveredIdx].command}</div>
+              <div
+                className="absolute left-2 right-2 z-10 px-2 py-1.5 rounded-lg bg-[var(--bg-primary)]/95 backdrop-blur-sm border border-[var(--border-color)] shadow-lg pointer-events-none"
+                style={{ top: tooltipTop + 4 }}
+              >
+                <div className="text-[11px] font-medium text-[var(--text-primary)] mb-0.5">{actions[hoveredIdx].label}</div>
+                <div className="text-[10px] text-[var(--text-secondary)] leading-snug">{actions[hoveredIdx].description}</div>
+                <div className="text-[10px] text-[var(--text-muted)] font-mono truncate mt-0.5">{actions[hoveredIdx].command}</div>
               </div>
             )}
           </>
