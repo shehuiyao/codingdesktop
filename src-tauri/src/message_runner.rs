@@ -275,8 +275,8 @@ impl PtySession {
         yolo: bool,
         tool: String,
         resume_session_id: Option<String>,
+        startup_command: Option<String>,
     ) -> Result<Self, String> {
-        let tool_path = resolve_tool_path(&tool)?;
         let pty_system = native_pty_system();
 
         let pair = pty_system
@@ -321,7 +321,7 @@ impl PtySession {
         let child = pair
             .slave
             .spawn_command(cmd)
-            .map_err(|e| format!("Failed to spawn claude: {}", e))?;
+            .map_err(|e| format!("Failed to spawn shell: {}", e))?;
 
         let child: Arc<Mutex<Box<dyn Child + Send>>> = Arc::new(Mutex::new(child));
 
@@ -339,7 +339,10 @@ impl PtySession {
 
         // Auto-send CLI command after a short delay to let the shell initialize
         let writer_clone = writer.clone();
-        let cli_cmd = {
+        let cli_cmd = if let Some(command) = startup_command {
+            format!("{}\n", command)
+        } else {
+            let tool_path = resolve_tool_path(&tool)?;
             let mut args = Vec::new();
             if tool != "gemini" && tool != "codex" && tool != "codex_sub" {
                 // claude / volc 模式：支持 yolo 和 resume

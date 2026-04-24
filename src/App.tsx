@@ -14,6 +14,7 @@ import BugTrackerPanel from "./components/BugTrackerPanel";
 import QuickActionsPanel from "./components/QuickActionsPanel";
 import TabBar, { type Tab, type CliTool } from "./components/TabBar";
 import SplitDivider from "./components/SplitDivider";
+import LaunchpadPanel from "./components/LaunchpadPanel";
 
 interface GitInfo {
   branch: string;
@@ -37,6 +38,7 @@ function App() {
 
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [showLaunchpad, setShowLaunchpad] = useState(true);
   // Track tabs that have had terminal mode activated (for lazy mounting)
   const [terminalActivated, setTerminalActivated] = useState<Set<string>>(new Set());
   // Map sessionId -> tabId for correlating pty events to tabs
@@ -75,6 +77,7 @@ function App() {
       setWorkingDir(selected);
       setActiveSessionId(null);
       setActiveProject(null);
+      setShowLaunchpad(false);
     }
   }, []);
 
@@ -122,6 +125,7 @@ function App() {
     setActiveTabId(tabId);
     setActiveSessionId(null);
     setActiveProject(null);
+    setShowLaunchpad(false);
     setTabs((prev) => {
       const tab = prev.find((t) => t.id === tabId);
       if (tab) setWorkingDir(tab.workingDir);
@@ -253,6 +257,7 @@ function App() {
       setActiveProject(projectSlug);
       setActiveSessionId(sessionId);
       setActiveTabId(null);
+      setShowLaunchpad(false);
     },
     [],
   );
@@ -269,6 +274,7 @@ function App() {
     setWorkingDir(projectPath);
     setActiveSessionId(null);
     setActiveProject(null);
+    setShowLaunchpad(false);
   }, []);
 
   // 从历史记录恢复对话：创建新终端 tab 并带上 --resume 参数
@@ -284,6 +290,7 @@ function App() {
     setWorkingDir(projectPath);
     setActiveSessionId(null);
     setActiveProject(null);
+    setShowLaunchpad(false);
   }, []);
 
   // 创建 git worktree 并打开为新 tab
@@ -301,10 +308,24 @@ function App() {
       setWorkingDir(result.path);
       setActiveSessionId(null);
       setActiveProject(null);
+      setShowLaunchpad(false);
     } catch (e) {
       console.error("Failed to create worktree:", e);
     }
   }, [workingDir]);
+
+  const handleToggleLaunchpad = useCallback(() => {
+    setShowLaunchpad((prev) => {
+      const next = !prev;
+      if (next) {
+        setActiveTabId(null);
+        setActiveSessionId(null);
+        setActiveProject(null);
+        setWorkingDir(null);
+      }
+      return next;
+    });
+  }, []);
 
   const handleNewSession = useCallback(async () => {
     await handleNewTab();
@@ -435,7 +456,7 @@ function App() {
   const showingTab = activeTabId !== null && activeTab !== undefined;
 
   // Welcome screen when nothing is selected
-  const showWelcome = !showingTab && !activeSessionId;
+  const showWelcome = !showLaunchpad && !showingTab && !activeSessionId;
 
   return (
     <div className="flex flex-col h-screen bg-[var(--bg-primary)] text-[var(--text-primary)]" onContextMenu={(e) => e.preventDefault()}>
@@ -462,7 +483,9 @@ function App() {
               <span className="block w-3 h-[1.5px] bg-current rounded-full" />
             </button>
             <span className="text-xs text-[var(--text-secondary)] truncate">
-              {showingTab
+              {showLaunchpad
+                ? "Project Launchpad"
+                : showingTab
                 ? activeTab.workingDir
                 : activeSessionId
                   ? `session: ${activeSessionId.slice(0, 8)}...`
@@ -481,14 +504,16 @@ function App() {
                 </svg>
               </button>
             )}
-            <div className="ml-auto flex items-center gap-2 shrink-0">
-              <BranchSwitcher
-                gitInfo={gitInfo}
-                workingDir={workingDir}
-                onBranchSwitched={refreshGitInfo}
-                onCreateWorktree={handleCreateWorktree}
-              />
-            </div>
+            {workingDir && (
+              <div className="ml-auto flex items-center gap-2 shrink-0">
+                <BranchSwitcher
+                  gitInfo={gitInfo}
+                  workingDir={workingDir}
+                  onBranchSwitched={refreshGitInfo}
+                  onCreateWorktree={handleCreateWorktree}
+                />
+              </div>
+            )}
           </div>
 
           {tabs.length > 0 && (
@@ -511,8 +536,14 @@ function App() {
               onPointerMove={handleContentPointerMove}
               onPointerUp={handleContentPointerUp}
             >
+              {showLaunchpad && (
+                <div className="absolute inset-0">
+                  <LaunchpadPanel />
+                </div>
+              )}
+
               {/* Mode picker - shown when tab is terminal mode but not yet activated */}
-              {tabs
+              {!showLaunchpad && tabs
                 .filter((tab) => tab.mode === "terminal" && !terminalActivated.has(tab.id))
                 .map((tab) => (
                   <div
@@ -588,14 +619,14 @@ function App() {
                 ))}
 
               {/* 分屏 drop zone 高亮 */}
-              {tabDragging && showDropZone && (
+              {!showLaunchpad && tabDragging && showDropZone && (
                 <div className="absolute inset-y-0 right-0 w-1/2 z-20 bg-[var(--accent-cyan)]/10 border-2 border-dashed border-[var(--accent-cyan)] rounded-r-lg pointer-events-none flex items-center justify-center">
                   <span className="text-sm text-[var(--accent-cyan)] font-medium">Split Right</span>
                 </div>
               )}
 
               {/* Terminal mode tabs - only mount if terminal was ever activated */}
-              {tabs
+              {!showLaunchpad && tabs
                 .filter((tab) => terminalActivated.has(tab.id))
                 .map((tab) => {
                   const isActive = tab.id === activeTabId && tab.mode === "terminal";
@@ -633,7 +664,7 @@ function App() {
                 })}
 
               {/* 分屏分隔线 */}
-              {splitTabId && (
+              {!showLaunchpad && splitTabId && (
                 <div
                   className="absolute top-0 bottom-0 z-10"
                   style={{ left: `calc(${splitRatio * 100}% - 2px)` }}
@@ -643,7 +674,7 @@ function App() {
               )}
 
               {/* 分屏关闭按钮 */}
-              {splitTabId && (
+              {!showLaunchpad && splitTabId && (
                 <button
                   onClick={handleCloseSplit}
                   className="absolute top-1 z-10 w-5 h-5 flex items-center justify-center rounded text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors"
@@ -655,7 +686,7 @@ function App() {
               )}
 
               {/* History session view */}
-              {!showingTab && activeSessionId && (
+              {!showLaunchpad && !showingTab && activeSessionId && (
                 <div className="absolute inset-0 flex flex-col overflow-hidden">
                   <ChatArea
                     sessionId={activeSessionId}
@@ -766,6 +797,15 @@ function App() {
           }`}
         >
           Files
+        </button>
+        <button
+          onClick={handleToggleLaunchpad}
+          className={`px-3 py-0.5 text-[10px] border-t border-l border-[var(--border-subtle)] bg-[var(--bg-secondary)] cursor-pointer transition-colors duration-150 ${
+            showLaunchpad ? "text-[var(--accent-cyan)]" : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+          }`}
+          title="项目启动面板"
+        >
+          Launchpad
         </button>
       </div>
 

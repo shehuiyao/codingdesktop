@@ -13,8 +13,11 @@ interface LiveTerminalProps {
   yolo?: boolean;
   tool?: CliTool;
   resumeSessionId?: string;
+  startupCommand?: string;
+  sessionLabel?: string;
   isActive?: boolean;
   onSessionStarted?: (id: string) => void;
+  onSessionExit?: () => void;
   onError?: (error: string) => void;
 }
 
@@ -67,7 +70,18 @@ function getTerminalTheme(isDark: boolean) {
   };
 }
 
-export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, isActive = true, onSessionStarted, onError }: LiveTerminalProps) {
+export default function LiveTerminal({
+  workingDir,
+  yolo,
+  tool,
+  resumeSessionId,
+  startupCommand,
+  sessionLabel,
+  isActive = true,
+  onSessionStarted,
+  onSessionExit,
+  onError,
+}: LiveTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -77,6 +91,8 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
   const recordedSkillsRef = useRef<Set<string>>(new Set());
   const onSessionStartedRef = useRef(onSessionStarted);
   onSessionStartedRef.current = onSessionStarted;
+  const onSessionExitRef = useRef(onSessionExit);
+  onSessionExitRef.current = onSessionExit;
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
   const [error, setError] = useState<string | null>(null);
@@ -270,6 +286,7 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
       const exitUn = await listen<{ id: string }>("pty-exit", (event) => {
         if (event.payload.id === sessionId) {
           term!.write("\r\n\x1b[33m[Session ended]\x1b[0m\r\n");
+          if (onSessionExitRef.current) onSessionExitRef.current();
         }
       });
       unlisteners.push(exitUn);
@@ -285,7 +302,13 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
 
       // Start PTY session
       try {
-        const id = await invoke<string>("start_session", { workingDir, yolo: yolo ?? false, tool: tool ?? "claude", resumeSessionId: resumeSessionId ?? null });
+        const id = await invoke<string>("start_session", {
+          workingDir,
+          yolo: yolo ?? false,
+          tool: tool ?? "claude",
+          resumeSessionId: resumeSessionId ?? null,
+          startupCommand: startupCommand ?? null,
+        });
         sessionId = id;
         sessionIdRef.current = id;
         setStarting(false);
@@ -420,7 +443,7 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
       term?.dispose();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- onSessionStarted is tracked via ref
-  }, [workingDir, yolo, tool, resumeSessionId]);
+  }, [workingDir, yolo, tool, resumeSessionId, startupCommand]);
 
   if (error) {
     return (
@@ -444,7 +467,13 @@ export default function LiveTerminal({ workingDir, yolo, tool, resumeSessionId, 
       )}
       {starting && (
         <div className="px-3 py-1 text-xs text-[var(--text-secondary)] bg-[var(--bg-secondary)] border-b border-[var(--border-color)]">
-          Starting {{ claude: "Claude", gemini: "Gemini", codex: "Codex", codex_sub: "Codex 订阅", volc: "火山 CodingPlan" }[tool ?? "claude"]} session...
+          Starting {sessionLabel ?? {
+            claude: "Claude",
+            gemini: "Gemini",
+            codex: "Codex",
+            codex_sub: "Codex 订阅",
+            volc: "火山 CodingPlan",
+          }[tool ?? "claude"]} session...
         </div>
       )}
       <div className="flex-1 min-h-0 p-2">
