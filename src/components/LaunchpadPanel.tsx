@@ -239,6 +239,35 @@ export default function LaunchpadPanel() {
     }));
   };
 
+  const removeGroup = (id: string) => {
+    setLaunchpadData((prev) => {
+      if (prev.groups.length <= 1) return prev;
+
+      const group = prev.groups.find((item) => item.id === id);
+      if (!group) return prev;
+
+      const nextGroups = prev.groups.filter((item) => item.id !== id);
+      const fallbackGroup = nextGroups[0];
+      const groupProjects = prev.projects.filter((project) => project.groupId === id);
+
+      if (groupProjects.length > 0) {
+        const confirmed = window.confirm(
+          `删除「${group.name || DEFAULT_GROUP_NAME}」后，里面的 ${groupProjects.length} 个项目会移动到「${fallbackGroup.name || DEFAULT_GROUP_NAME}」。继续吗？`,
+        );
+        if (!confirmed) return prev;
+      }
+
+      return {
+        ...prev,
+        groups: nextGroups,
+        activeGroupId: prev.activeGroupId === id ? fallbackGroup.id : prev.activeGroupId,
+        projects: prev.projects.map((project) =>
+          project.groupId === id ? { ...project, groupId: fallbackGroup.id } : project,
+        ),
+      };
+    });
+  };
+
   const selectGroup = (id: string) => {
     setLaunchpadData((prev) => ({ ...prev, activeGroupId: id }));
   };
@@ -453,6 +482,18 @@ export default function LaunchpadPanel() {
                   <span className="text-[10px] text-[var(--text-muted)]">
                     {groupProjects.length} 项 · {groupRunningCount} 运行
                   </span>
+                  {groups.length > 1 && (
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        removeGroup(group.id);
+                      }}
+                      className="ml-1 rounded-lg px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] transition hover:bg-[var(--accent-red)]/10 hover:text-[var(--accent-red)]"
+                      title="删除分组"
+                    >
+                      ×
+                    </button>
+                  )}
                 </div>
               );
             })}
