@@ -19,7 +19,8 @@
       "Bash(crontab:*)",
       "Skill(xy-bug-track)",
       "Bash(ls:*)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(/tmp/codex-subscription-home/.codex)"
     ]
   }
 }

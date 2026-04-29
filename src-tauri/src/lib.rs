@@ -1,4 +1,5 @@
 mod chat_runner;
+mod codex_usage;
 mod history;
 mod message_runner;
 
@@ -1191,6 +1192,11 @@ fn get_usage_stats() -> Result<UsageStats, String> {
 }
 
 #[tauri::command]
+fn get_codex_usage() -> Result<codex_usage::CodexUsageReport, String> {
+    codex_usage::collect_codex_usage()
+}
+
+#[tauri::command]
 fn open_terminal(path: String) -> Result<(), String> {
     use std::process::Command;
     let mut child = Command::new("open")
@@ -1585,6 +1591,7 @@ pub fn run() {
             record_skill_usage,
             get_skill_usage,
             get_usage_stats,
+            get_codex_usage,
             list_bugs,
             update_bug_status,
             update_bug_priority,

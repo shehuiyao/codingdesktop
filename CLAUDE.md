@@ -74,9 +74,9 @@ chore: bump version                   ← 英文、太模糊
 
 ## 版本发布流程
 
-当用户要求发布新版本时，按以下步骤执行：
+当用户要求发布新版本、发版、release、版本升级时，**必须先使用 `xy-release` 技能**。这里不再维护一份完整的手工发版步骤，避免项目文档和技能流程不一致。
 
-### 1. 更新版本号（4 处同步）
+### 项目发版差异
 - `package.json` → `"version"`
 - `src-tauri/Cargo.toml` → `version`
 - `src-tauri/tauri.conf.json` → `"version"`
@@ -84,14 +84,7 @@ chore: bump version                   ← 英文、太模糊
 
 > 说明：软件展示名、内部包名、Bundle Identifier 和数据目录当前统一沿用 `Claude Desktop` / `claude-desktop` / `~/.claude-desktop`。如果未来改名，必须同步评估数据迁移和自动更新兼容。
 
-### 2. 提交并推送
-```bash
-git add -A
-git commit -m "chore: 简要描述本次发版的主要变更"
-git push
-```
-
-### 3. 构建（带签名 + 反馈 Token）
+### 构建环境变量
 ```bash
 GITHUB_FEEDBACK_TOKEN="$(cat ~/.claude-desktop/.github_token)" \
 TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/key.key)" \
@@ -100,45 +93,19 @@ npm run tauri build
 ```
 - `GITHUB_FEEDBACK_TOKEN`：用户提交反馈时自动创建 GitHub Issue（不带则反馈仅保存本地）
 - Token 存放在 `~/.claude-desktop/.github_token`，需 fine-grained PAT，仅需 Issues 写权限
+
+### 构建产物
 - 构建产物目录：`src-tauri/target/release/bundle/`
   - `macos/Claude Desktop.app`（应用本体）
   - `macos/Claude Desktop.app.tar.gz`（更新包）
   - `macos/Claude Desktop.app.tar.gz.sig`（签名文件）
   - `dmg/Claude Desktop_X.Y.Z_aarch64.dmg`（安装镜像，可直接分发）
 
-### 4. 生成 latest.json
-```bash
-cat > /tmp/latest.json << EOF
-{
-  "version": "X.Y.Z",
-  "notes": "更新说明",
-  "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "platforms": {
-    "darwin-aarch64": {
-      "signature": "$(cat 'src-tauri/target/release/bundle/macos/Claude Desktop.app.tar.gz.sig')",
-      "url": "https://github.com/shehuiyao/claudedesktop/releases/download/vX.Y.Z/Claude.Desktop.app.tar.gz"
-    }
-  }
-}
-EOF
-```
-
-### 5. 创建 GitHub Release
-```bash
-gh release create vX.Y.Z \
-  "src-tauri/target/release/bundle/macos/Claude Desktop.app.tar.gz" \
-  "src-tauri/target/release/bundle/dmg/Claude Desktop_X.Y.Z_aarch64.dmg" \
-  "/tmp/latest.json" \
-  --title "vX.Y.Z" \
-  --notes "更新内容..."
-```
-
-### 6. 验证
-```bash
-# 验证 latest.json 可访问
-curl -sL https://github.com/shehuiyao/claudedesktop/releases/latest/download/latest.json | head
-```
-确认返回的 JSON 中 `version` 为新版本号。
+### 发版注意事项
+- 以 `xy-release` 技能流程为准：确认版本号 → 更新版本 → 构建 → 检查 DMG → 提交 → 打 tag 并推送 → 生成 `latest.json` → 创建 GitHub Release → 验证。
+- `latest.json` 的下载 URL 和上传文件名必须读取真实构建产物，不要手写猜测文件名。尤其注意 `Claude Desktop.app.tar.gz` 文件名里有空格，不要误写成 `Claude.Desktop.app.tar.gz`。
+- GitHub Release 必须上传 DMG、`.app.tar.gz` 更新包和 `latest.json`，三者缺一都会影响安装或自动更新。
+- 发版过程中遇到的新坑、修正后的命令、产物命名变化，都要同步回本项目文档；流程规则写入本文件和 `CLAUDE.md`，具体坑点写入 `docs/release-known-issues.md`。
 
 ### 首次设置签名密钥
 如果还没有签名密钥，先生成：

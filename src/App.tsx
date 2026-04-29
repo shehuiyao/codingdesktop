@@ -15,6 +15,7 @@ import QuickActionsPanel from "./components/QuickActionsPanel";
 import TabBar, { type Tab, type CliTool } from "./components/TabBar";
 import SplitDivider from "./components/SplitDivider";
 import LaunchpadPanel from "./components/LaunchpadPanel";
+import CodexUsagePanel from "./components/CodexUsagePanel";
 
 interface GitInfo {
   branch: string;
@@ -39,6 +40,7 @@ function App() {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [showLaunchpad, setShowLaunchpad] = useState(true);
+  const [showCodexUsage, setShowCodexUsage] = useState(false);
   // Track tabs that have had terminal mode activated (for lazy mounting)
   const [terminalActivated, setTerminalActivated] = useState<Set<string>>(new Set());
   // Map sessionId -> tabId for correlating pty events to tabs
@@ -78,6 +80,7 @@ function App() {
       setActiveSessionId(null);
       setActiveProject(null);
       setShowLaunchpad(false);
+      setShowCodexUsage(false);
     }
   }, []);
 
@@ -126,6 +129,7 @@ function App() {
     setActiveSessionId(null);
     setActiveProject(null);
     setShowLaunchpad(false);
+    setShowCodexUsage(false);
     setTabs((prev) => {
       const tab = prev.find((t) => t.id === tabId);
       if (tab) setWorkingDir(tab.workingDir);
@@ -258,6 +262,7 @@ function App() {
       setActiveSessionId(sessionId);
       setActiveTabId(null);
       setShowLaunchpad(false);
+      setShowCodexUsage(false);
     },
     [],
   );
@@ -275,6 +280,7 @@ function App() {
     setActiveSessionId(null);
     setActiveProject(null);
     setShowLaunchpad(false);
+    setShowCodexUsage(false);
   }, []);
 
   // 从历史记录恢复对话：创建新终端 tab 并带上 --resume 参数
@@ -291,6 +297,7 @@ function App() {
     setActiveSessionId(null);
     setActiveProject(null);
     setShowLaunchpad(false);
+    setShowCodexUsage(false);
   }, []);
 
   // 创建 git worktree 并打开为新 tab
@@ -309,13 +316,26 @@ function App() {
       setActiveSessionId(null);
       setActiveProject(null);
       setShowLaunchpad(false);
+      setShowCodexUsage(false);
     } catch (e) {
       console.error("Failed to create worktree:", e);
     }
   }, [workingDir]);
 
   const handleToggleLaunchpad = useCallback(() => {
-    setShowLaunchpad((prev) => !prev);
+    setShowLaunchpad((prev) => {
+      const next = !prev;
+      if (next) setShowCodexUsage(false);
+      return next;
+    });
+  }, []);
+
+  const handleToggleCodexUsage = useCallback(() => {
+    setShowCodexUsage((prev) => {
+      const next = !prev;
+      if (next) setShowLaunchpad(false);
+      return next;
+    });
   }, []);
 
   const handleNewSession = useCallback(async () => {
@@ -445,10 +465,10 @@ function App() {
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const showingTab = activeTabId !== null && activeTab !== undefined;
-  const isWorkspaceVisible = !showLaunchpad;
+  const isWorkspaceVisible = !showLaunchpad && !showCodexUsage;
 
   // Welcome screen when nothing is selected
-  const showWelcome = !showLaunchpad && !showingTab && !activeSessionId;
+  const showWelcome = isWorkspaceVisible && !showingTab && !activeSessionId;
 
   return (
     <div className="flex flex-col h-screen bg-[var(--bg-primary)] text-[var(--text-primary)]" onContextMenu={(e) => e.preventDefault()}>
@@ -477,6 +497,8 @@ function App() {
             <span className="text-xs text-[var(--text-secondary)] truncate">
               {showLaunchpad
                 ? "Project Launchpad"
+                : showCodexUsage
+                ? "Codex API Usage"
                 : showingTab
                 ? activeTab.workingDir
                 : activeSessionId
@@ -532,6 +554,12 @@ function App() {
                 className={`absolute inset-0 ${showLaunchpad ? "block" : "hidden"}`}
               >
                 <LaunchpadPanel />
+              </div>
+
+              <div
+                className={`absolute inset-0 ${showCodexUsage ? "block" : "hidden"}`}
+              >
+                <CodexUsagePanel />
               </div>
 
               {/* Mode picker - shown when tab is terminal mode but not yet activated */}
@@ -801,6 +829,15 @@ function App() {
           title="项目启动面板"
         >
           Launchpad
+        </button>
+        <button
+          onClick={handleToggleCodexUsage}
+          className={`px-3 py-0.5 text-[10px] border-t border-l border-[var(--border-subtle)] bg-[var(--bg-secondary)] cursor-pointer transition-colors duration-150 ${
+            showCodexUsage ? "text-[var(--accent-cyan)]" : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+          }`}
+          title="Codex API 用量"
+        >
+          Codex
         </button>
       </div>
 
