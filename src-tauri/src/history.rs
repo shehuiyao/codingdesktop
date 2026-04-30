@@ -383,35 +383,6 @@ fn read_codex_session_summary(
     })
 }
 
-/// Build a map from Codex session_id → (cwd, file_path) by scanning ~/.codex/sessions/.
-fn build_codex_session_map() -> HashMap<String, (String, PathBuf)> {
-    let mut map = HashMap::new();
-
-    for (root, tool) in codex_roots() {
-        let prompts = read_codex_history_prompts(&root);
-        for dir in codex_session_dirs(&root) {
-            for path in walk_jsonl_files(&dir) {
-                let session_id = match path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .and_then(extract_session_id_from_filename)
-                {
-                    Some(id) => id,
-                    None => continue,
-                };
-                let prompt_info = prompts.get(&session_id);
-                if let Some(summary) = read_codex_session_summary(&path, &tool, prompt_info) {
-                    if let Some(cwd) = summary.project {
-                        map.insert(session_id, (cwd, path));
-                    }
-                }
-            }
-        }
-    }
-
-    map
-}
-
 fn upsert_codex_entry(entries: &mut HashMap<String, HistoryEntry>, entry: HistoryEntry) {
     let Some(id) = entry.session_id.clone() else {
         return;
@@ -439,9 +410,6 @@ fn upsert_codex_entry(entries: &mut HashMap<String, HistoryEntry>, entry: Histor
 }
 
 fn read_codex_history() -> Result<Vec<HistoryEntry>, String> {
-    // Build session map to get cwd for each session (already includes both directories)
-    let session_map = build_codex_session_map();
-
     let mut entries_by_id: HashMap<String, HistoryEntry> = HashMap::new();
 
     for (codex, root_tool) in codex_roots() {
@@ -463,26 +431,15 @@ fn read_codex_history() -> Result<Vec<HistoryEntry>, String> {
                     };
                     let thread_name = val["thread_name"].as_str().map(|s| s.to_string());
                     let updated_at = val["updated_at"].as_str().map(|s| s.to_string());
-                    let cwd = session_map.get(&id).map(|(cwd, _)| cwd.clone());
-                    let tool = session_map
-                        .get(&id)
-                        .map(|(_, path)| {
-                            if path.starts_with(codex_sub_dir()) {
-                                "codex_sub".to_string()
-                            } else {
-                                "codex".to_string()
-                            }
-                        })
-                        .unwrap_or_else(|| root_tool.clone());
 
                     upsert_codex_entry(
                         &mut entries_by_id,
                         HistoryEntry {
                             display: thread_name,
                             timestamp: updated_at,
-                            project: cwd,
+                            project: None,
                             session_id: Some(id),
-                            tool: Some(tool),
+                            tool: Some(root_tool.clone()),
                         },
                     );
                 }

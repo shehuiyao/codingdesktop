@@ -11,6 +11,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
+use std::time::Instant;
 use tauri::{Emitter, Manager, State};
 
 const APP_DATA_DIR: &str = ".coding-desktop";
@@ -22,6 +23,21 @@ const LEGACY_LOCAL_STORAGE_KEYS: [&str; 3] = [
     "claude-desktop-pinned-projects",
     "claude-desktop-codex-permission-modes",
 ];
+
+fn log_perf(command: &str, started: Instant, status: &str, detail: &str) {
+    let detail_suffix = if detail.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", detail)
+    };
+    eprintln!(
+        "[perf] command={} status={} elapsed_ms={}{}",
+        command,
+        status,
+        started.elapsed().as_millis(),
+        detail_suffix
+    );
+}
 
 #[derive(serde::Deserialize)]
 struct LaunchpadProjectProbe {
@@ -181,7 +197,19 @@ struct SystemProxyConfig {
 
 #[tauri::command]
 fn get_history() -> Result<Vec<history::HistoryEntry>, String> {
-    history::read_history()
+    let started = Instant::now();
+    let result = history::read_history();
+    let detail = result
+        .as_ref()
+        .map(|entries| format!("entries={}", entries.len()))
+        .unwrap_or_default();
+    log_perf(
+        "get_history",
+        started,
+        if result.is_ok() { "ok" } else { "error" },
+        &detail,
+    );
+    result
 }
 
 #[tauri::command]
@@ -791,89 +819,108 @@ struct GitInfo {
 fn get_git_info(path: String) -> Result<GitInfo, String> {
     use std::process::Command;
 
-    let branch_output = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(&path)
-        .output()
-        .map_err(|e| format!("Failed to run git: {}", e))?;
+    let started = Instant::now();
+    let result = (|| {
+        let branch_output = Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(&path)
+            .output()
+            .map_err(|e| format!("Failed to run git: {}", e))?;
 
-    if !branch_output.status.success() {
-        return Err("Not a git repository".to_string());
-    }
+        if !branch_output.status.success() {
+            return Err("Not a git repository".to_string());
+        }
 
-    let branch = String::from_utf8_lossy(&branch_output.stdout)
-        .trim()
-        .to_string();
+        let branch = String::from_utf8_lossy(&branch_output.stdout)
+            .trim()
+            .to_string();
 
-    let mut additions: i64 = 0;
-    let mut deletions: i64 = 0;
+        let mut additions: i64 = 0;
+        let mut deletions: i64 = 0;
 
-    // 解析 git diff --numstat 输出，累加到 additions/deletions
-    let accumulate_numstat = |output: &[u8], add: &mut i64, del: &mut i64| {
-        for line in String::from_utf8_lossy(output).lines() {
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 2 {
-                if let Ok(a) = parts[0].parse::<i64>() {
-                    *add += a;
+        // 解析 git diff --numstat 输出，累加到 additions/deletions
+        let accumulate_numstat = |output: &[u8], add: &mut i64, del: &mut i64| {
+            for line in String::from_utf8_lossy(output).lines() {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.len() >= 2 {
+                    if let Ok(a) = parts[0].parse::<i64>() {
+                        *add += a;
+                    }
+                    if let Ok(d) = parts[1].parse::<i64>() {
+                        *del += d;
+                    }
                 }
-                if let Ok(d) = parts[1].parse::<i64>() {
-                    *del += d;
+            }
+        };
+
+        // 不在默认分支时，统计分支上的已提交改动
+        if branch != "main" && branch != "master" {
+            let has_origin_main = Command::new("git")
+                .args(["rev-parse", "--verify", "origin/main"])
+                .current_dir(&path)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            let default_branch = if has_origin_main {
+                "origin/main"
+            } else {
+                "origin/master"
+            };
+
+            if let Ok(output) = Command::new("git")
+                .args(["diff", "--numstat", &format!("{}...HEAD", default_branch)])
+                .current_dir(&path)
+                .output()
+            {
+                if output.status.success() {
+                    accumulate_numstat(&output.stdout, &mut additions, &mut deletions);
                 }
             }
         }
-    };
 
-    // 不在默认分支时，统计分支上的已提交改动
-    if branch != "main" && branch != "master" {
-        let has_origin_main = Command::new("git")
-            .args(["rev-parse", "--verify", "origin/main"])
-            .current_dir(&path)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        let default_branch = if has_origin_main {
-            "origin/main"
-        } else {
-            "origin/master"
-        };
-
+        // 未提交的改动（staged + unstaged）
         if let Ok(output) = Command::new("git")
-            .args(["diff", "--numstat", &format!("{}...HEAD", default_branch)])
+            .args(["diff", "--numstat", "HEAD"])
             .current_dir(&path)
             .output()
         {
             if output.status.success() {
                 accumulate_numstat(&output.stdout, &mut additions, &mut deletions);
             }
-        }
-    }
-
-    // 未提交的改动（staged + unstaged）
-    if let Ok(output) = Command::new("git")
-        .args(["diff", "--numstat", "HEAD"])
-        .current_dir(&path)
-        .output()
-    {
-        if output.status.success() {
-            accumulate_numstat(&output.stdout, &mut additions, &mut deletions);
-        }
-    } else {
-        // HEAD 不存在（新仓库无 commit）
-        for args in &[
-            vec!["diff", "--cached", "--numstat"],
-            vec!["diff", "--numstat"],
-        ] {
-            if let Ok(output) = Command::new("git").args(args).current_dir(&path).output() {
-                accumulate_numstat(&output.stdout, &mut additions, &mut deletions);
+        } else {
+            // HEAD 不存在（新仓库无 commit）
+            for args in &[
+                vec!["diff", "--cached", "--numstat"],
+                vec!["diff", "--numstat"],
+            ] {
+                if let Ok(output) = Command::new("git").args(args).current_dir(&path).output() {
+                    accumulate_numstat(&output.stdout, &mut additions, &mut deletions);
+                }
             }
         }
-    }
 
-    Ok(GitInfo {
-        branch,
-        additions,
-        deletions,
-    })
+        Ok(GitInfo {
+            branch,
+            additions,
+            deletions,
+        })
+    })();
+    let detail = result
+        .as_ref()
+        .map(|info| {
+            format!(
+                "branch={} additions={} deletions={}",
+                info.branch, info.additions, info.deletions
+            )
+        })
+        .unwrap_or_default();
+    log_perf(
+        "get_git_info",
+        started,
+        if result.is_ok() { "ok" } else { "error" },
+        &detail,
+    );
+    result
 }
 
 #[derive(serde::Serialize)]
@@ -2302,40 +2349,59 @@ struct UsageStats {
 
 #[tauri::command]
 fn get_usage_stats() -> Result<UsageStats, String> {
-    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
-    let stats_file = home.join(".claude").join("stats-cache.json");
-    if !stats_file.exists() {
-        return Ok(UsageStats::default());
-    }
-    let content =
-        std::fs::read_to_string(&stats_file).map_err(|e| format!("读取统计失败: {}", e))?;
-    let json: serde_json::Value =
-        serde_json::from_str(&content).map_err(|e| format!("解析统计失败: {}", e))?;
+    let started = Instant::now();
+    let result = (|| {
+        let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+        let stats_file = home.join(".claude").join("stats-cache.json");
+        if !stats_file.exists() {
+            return Ok(UsageStats::default());
+        }
+        let content =
+            std::fs::read_to_string(&stats_file).map_err(|e| format!("读取统计失败: {}", e))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&content).map_err(|e| format!("解析统计失败: {}", e))?;
 
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let mut stats = UsageStats::default();
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let mut stats = UsageStats::default();
 
-    if let Some(daily) = json.get("dailyActivity").and_then(|d| d.as_array()) {
-        for entry in daily {
-            if entry.get("date").and_then(|d| d.as_str()) == Some(&today) {
-                stats.today_messages = entry
-                    .get("messageCount")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                stats.today_sessions = entry
-                    .get("sessionCount")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                stats.today_tool_calls = entry
-                    .get("toolCallCount")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                break;
+        if let Some(daily) = json.get("dailyActivity").and_then(|d| d.as_array()) {
+            for entry in daily {
+                if entry.get("date").and_then(|d| d.as_str()) == Some(&today) {
+                    stats.today_messages = entry
+                        .get("messageCount")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    stats.today_sessions = entry
+                        .get("sessionCount")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    stats.today_tool_calls = entry
+                        .get("toolCallCount")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    break;
+                }
             }
         }
-    }
 
-    Ok(stats)
+        Ok(stats)
+    })();
+    let detail = result
+        .as_ref()
+        .map(|stats| {
+            format!(
+                "messages={} sessions={} tool_calls={}",
+                stats.today_messages, stats.today_sessions, stats.today_tool_calls
+            )
+        })
+        .unwrap_or_default();
+    log_perf(
+        "get_usage_stats",
+        started,
+        if result.is_ok() { "ok" } else { "error" },
+        &detail,
+    );
+    result
 }
 
 #[tauri::command]
@@ -2436,36 +2502,50 @@ fn get_bugs_json_path(working_dir: &str) -> Result<std::path::PathBuf, String> {
 
 #[tauri::command]
 fn list_bugs(working_dir: String) -> Result<BugsData, String> {
-    let bugs_path = get_bugs_json_path(&working_dir)?;
+    let started = Instant::now();
+    let result = (|| {
+        let bugs_path = get_bugs_json_path(&working_dir)?;
 
-    let empty = BugsData {
-        project: String::new(),
-        branch: String::new(),
-        created: String::new(),
-        bugs: vec![],
-        project_root: None,
-    };
+        let empty = BugsData {
+            project: String::new(),
+            branch: String::new(),
+            created: String::new(),
+            bugs: vec![],
+            project_root: None,
+        };
 
-    if !bugs_path.exists() {
-        return Ok(empty);
-    }
+        if !bugs_path.exists() {
+            return Ok(empty);
+        }
 
-    let content =
-        std::fs::read_to_string(&bugs_path).map_err(|e| format!("读取 bugs.json 失败: {}", e))?;
+        let content = std::fs::read_to_string(&bugs_path)
+            .map_err(|e| format!("读取 bugs.json 失败: {}", e))?;
 
-    let data: BugsData =
-        serde_json::from_str(&content).map_err(|e| format!("解析 bugs.json 失败: {}", e))?;
+        let data: BugsData =
+            serde_json::from_str(&content).map_err(|e| format!("解析 bugs.json 失败: {}", e))?;
 
-    // 校验项目归属：如果 bugs.json 记录了 project_root，则只在匹配时返回数据
-    if let Some(ref stored_root) = data.project_root {
-        if let Ok(current_root) = get_git_toplevel(&working_dir) {
-            if stored_root != &current_root {
-                return Ok(empty);
+        // 校验项目归属：如果 bugs.json 记录了 project_root，则只在匹配时返回数据
+        if let Some(ref stored_root) = data.project_root {
+            if let Ok(current_root) = get_git_toplevel(&working_dir) {
+                if stored_root != &current_root {
+                    return Ok(empty);
+                }
             }
         }
-    }
 
-    Ok(data)
+        Ok(data)
+    })();
+    let detail = result
+        .as_ref()
+        .map(|data| format!("bugs={}", data.bugs.len()))
+        .unwrap_or_default();
+    log_perf(
+        "list_bugs",
+        started,
+        if result.is_ok() { "ok" } else { "error" },
+        &detail,
+    );
+    result
 }
 
 #[tauri::command]

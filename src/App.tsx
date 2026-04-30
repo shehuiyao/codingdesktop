@@ -17,6 +17,8 @@ import SplitDivider from "./components/SplitDivider";
 import LaunchpadPanel from "./components/LaunchpadPanel";
 import CodexUsagePanel from "./components/CodexUsagePanel";
 
+const GIT_INFO_REFRESH_INTERVAL_MS = 30_000;
+
 interface GitInfo {
   branch: string;
   additions: number;
@@ -429,6 +431,7 @@ function App() {
     }
     let pending = false;
     const fetchGit = () => {
+      if (document.hidden) return;
       if (pending) return; // 防止上一次还没返回时重复发起
       pending = true;
       invoke<GitInfo>("get_git_info", { path: workingDir })
@@ -437,7 +440,7 @@ function App() {
         .finally(() => { pending = false; });
     };
     fetchGit();
-    const interval = setInterval(fetchGit, 5000);
+    const interval = setInterval(fetchGit, GIT_INFO_REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [workingDir]);
 

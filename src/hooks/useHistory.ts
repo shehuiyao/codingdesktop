@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 export interface HistoryEntry {
@@ -15,7 +15,7 @@ export interface GroupedHistory {
 }
 
 const HISTORY_VISIBLE_MONTHS = 1;
-const HISTORY_REFRESH_INTERVAL_MS = 15_000;
+const HISTORY_REFRESH_INTERVAL_MS = 5 * 60_000;
 
 /** Parse a timestamp that may be an epoch-ms number string or an ISO date string. */
 function parseTimestamp(ts: string): number {
@@ -80,8 +80,11 @@ export function useHistory() {
   const [history, setHistory] = useState<GroupedHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const refreshingRef = useRef(false);
 
   async function fetchHistory(silent = false) {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
     if (!silent) {
       setLoading(true);
     }
@@ -93,13 +96,18 @@ export function useHistory() {
       setError(String(err));
     } finally {
       setLoading(false);
+      refreshingRef.current = false;
     }
   }
 
   useEffect(() => {
     fetchHistory();
 
-    const intervalId = window.setInterval(() => fetchHistory(true), HISTORY_REFRESH_INTERVAL_MS);
+    const intervalId = window.setInterval(() => {
+      if (!document.hidden) {
+        fetchHistory(true);
+      }
+    }, HISTORY_REFRESH_INTERVAL_MS);
     const refreshWhenVisible = () => {
       if (!document.hidden) {
         fetchHistory(true);

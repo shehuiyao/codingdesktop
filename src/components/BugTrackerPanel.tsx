@@ -56,6 +56,8 @@ const STATUS_DOT_COLORS: Record<string, string> = {
 
 type FilterType = "all" | "pending" | "fixing" | "fixed" | "shelved";
 
+const BUGS_REFRESH_INTERVAL_MS = 30_000;
+
 export default function BugTrackerPanel({ workingDir, onClose }: BugTrackerPanelProps) {
   const [bugsData, setBugsData] = useState<BugsData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +82,11 @@ export default function BugTrackerPanel({ workingDir, onClose }: BugTrackerPanel
 
   useEffect(() => {
     loadBugs();
-    const timer = setInterval(loadBugs, 5000);
+    const timer = setInterval(() => {
+      if (!document.hidden) {
+        loadBugs();
+      }
+    }, BUGS_REFRESH_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [loadBugs]);
 
