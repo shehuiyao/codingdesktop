@@ -110,6 +110,7 @@ fn read_rollout(path: &Path) -> (Vec<CodexUsageItem>, Vec<CodexSpeedItem>) {
     let mut starts: HashMap<String, DateTime<Local>> = HashMap::new();
     let mut usage_items = Vec::new();
     let mut speed_items = Vec::new();
+    let mut last_usage: Option<((u64, u64, u64, u64, u64), DateTime<Local>)> = None;
 
     for line in reader.lines().map_while(Result::ok) {
         let trimmed = line.trim();
@@ -166,30 +167,47 @@ fn read_rollout(path: &Path) -> (Vec<CodexUsageItem>, Vec<CodexSpeedItem>) {
                     .get("info")
                     .and_then(|info| info.get("last_token_usage"))
                     .unwrap_or(&Value::Null);
+                let input = usage
+                    .get("input_tokens")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+                let cached = usage
+                    .get("cached_input_tokens")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+                let output = usage
+                    .get("output_tokens")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+                let reasoning = usage
+                    .get("reasoning_output_tokens")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+                let total = usage
+                    .get("total_tokens")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+                let signature = (input, cached, output, reasoning, total);
+
+                if let Some((previous_signature, previous_ts)) = last_usage {
+                    let seconds_since_previous =
+                        ts.signed_duration_since(previous_ts).num_seconds();
+                    if previous_signature == signature && (0..=60).contains(&seconds_since_previous)
+                    {
+                        continue;
+                    }
+                }
+
+                last_usage = Some((signature, ts));
                 usage_items.push(CodexUsageItem {
                     date: ts.format("%Y-%m-%d").to_string(),
                     hour: ts.hour(),
                     project: project.clone(),
-                    input: usage
-                        .get("input_tokens")
-                        .and_then(|value| value.as_u64())
-                        .unwrap_or(0),
-                    cached: usage
-                        .get("cached_input_tokens")
-                        .and_then(|value| value.as_u64())
-                        .unwrap_or(0),
-                    output: usage
-                        .get("output_tokens")
-                        .and_then(|value| value.as_u64())
-                        .unwrap_or(0),
-                    reasoning: usage
-                        .get("reasoning_output_tokens")
-                        .and_then(|value| value.as_u64())
-                        .unwrap_or(0),
-                    total: usage
-                        .get("total_tokens")
-                        .and_then(|value| value.as_u64())
-                        .unwrap_or(0),
+                    input,
+                    cached,
+                    output,
+                    reasoning,
+                    total,
                 });
             }
             _ => {}

@@ -28,8 +28,10 @@ const CONFIRMATION_CUES: [&str; 14] = [
 fn ansi_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[P^_].*?\x1b\\|\x1b[@-_]")
-            .expect("valid ANSI regex")
+        Regex::new(
+            r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[P^_].*?\x1b\\|\x1b[@-_]",
+        )
+        .expect("valid ANSI regex")
     })
 }
 
@@ -160,7 +162,10 @@ fn resolve_binary(name: &str, extra_candidates: &[PathBuf]) -> Result<PathBuf, S
             return Ok(candidate.clone());
         }
     }
-    Err(format!("Cannot find '{}' binary. Make sure it is installed.", name))
+    Err(format!(
+        "Cannot find '{}' binary. Make sure it is installed.",
+        name
+    ))
 }
 
 /// 查找 nvm 管理的 node 版本中的某个二进制文件
@@ -222,10 +227,7 @@ fn ensure_codex_subscription_home(working_dir: &str) -> Result<(), String> {
 
     let config_path = codex_dir.join("config.toml");
     if !config_path.exists() {
-        let config_content = format!(
-            "[trusted_projects]\n\"{}\" = true\n",
-            working_dir
-        );
+        let config_content = format!("[trusted_projects]\n\"{}\" = true\n", working_dir);
         std::fs::write(&config_path, config_content)
             .map_err(|e| format!("Failed to write config.toml: {}", e))?;
     }
@@ -315,7 +317,10 @@ impl PtySession {
 
         // 火山 CodingPlan：覆盖 Anthropic API 端点
         if tool == "volc" {
-            cmd.env("ANTHROPIC_BASE_URL", "https://ark.cn-beijing.volces.com/api/coding");
+            cmd.env(
+                "ANTHROPIC_BASE_URL",
+                "https://ark.cn-beijing.volces.com/api/coding",
+            );
             if let Some(key) = read_volc_key() {
                 cmd.env("ANTHROPIC_API_KEY", key);
             }
@@ -333,12 +338,13 @@ impl PtySession {
             .try_clone_reader()
             .map_err(|e| format!("Failed to get PTY reader: {}", e))?;
 
-        let writer = Arc::new(Mutex::new(pair.master.take_writer().map_err(|e| {
-            format!("Failed to get PTY writer: {}", e)
-        })?));
+        let writer = Arc::new(Mutex::new(
+            pair.master
+                .take_writer()
+                .map_err(|e| format!("Failed to get PTY writer: {}", e))?,
+        ));
 
-        let master: Arc<Mutex<Box<dyn MasterPty + Send>>> =
-            Arc::new(Mutex::new(pair.master));
+        let master: Arc<Mutex<Box<dyn MasterPty + Send>>> = Arc::new(Mutex::new(pair.master));
 
         // Auto-send CLI command after a short delay to let the shell initialize
         let writer_clone = writer.clone();
@@ -431,11 +437,7 @@ impl PtySession {
                         if !remainder.is_empty() {
                             let data = String::from_utf8_lossy(&remainder).to_string();
                             let normalized = normalize_terminal_text(&data);
-                            append_tail(
-                                &mut prompt_tail,
-                                &normalized,
-                                CONFIRMATION_TAIL_MAX_CHARS,
-                            );
+                            append_tail(&mut prompt_tail, &normalized, CONFIRMATION_TAIL_MAX_CHARS);
                             let detected = is_confirmation_prompt(&prompt_tail);
                             if detected != awaiting_confirmation {
                                 awaiting_confirmation = detected;
@@ -455,8 +457,7 @@ impl PtySession {
                                 serde_json::json!({"id": &session_id, "waiting": false}),
                             );
                         }
-                        let _ = app_clone
-                            .emit("pty-exit", serde_json::json!({"id": &session_id}));
+                        let _ = app_clone.emit("pty-exit", serde_json::json!({"id": &session_id}));
                         break;
                     }
                     Ok(n) => {
@@ -477,13 +478,10 @@ impl PtySession {
 
                         if valid_up_to > 0 {
                             // Safe: we verified this is valid UTF-8 up to this point
-                            let data = String::from_utf8_lossy(&combined[..valid_up_to]).to_string();
+                            let data =
+                                String::from_utf8_lossy(&combined[..valid_up_to]).to_string();
                             let normalized = normalize_terminal_text(&data);
-                            append_tail(
-                                &mut prompt_tail,
-                                &normalized,
-                                CONFIRMATION_TAIL_MAX_CHARS,
-                            );
+                            append_tail(&mut prompt_tail, &normalized, CONFIRMATION_TAIL_MAX_CHARS);
                             let detected = is_confirmation_prompt(&prompt_tail);
                             if detected != awaiting_confirmation {
                                 awaiting_confirmation = detected;
@@ -513,15 +511,18 @@ impl PtySession {
                                 "error": format!("PTY read error: {}", e)
                             }),
                         );
-                        let _ = app_clone
-                            .emit("pty-exit", serde_json::json!({"id": &session_id}));
+                        let _ = app_clone.emit("pty-exit", serde_json::json!({"id": &session_id}));
                         break;
                     }
                 }
             }
         });
 
-        Ok(PtySession { writer, master, child })
+        Ok(PtySession {
+            writer,
+            master,
+            child,
+        })
     }
 
     /// Kill the PTY child process and its entire process group.
@@ -548,7 +549,10 @@ impl PtySession {
     }
 
     pub fn write(&self, data: &str) -> Result<(), String> {
-        let mut writer = self.writer.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
         writer
             .write_all(data.as_bytes())
             .map_err(|e| format!("Write error: {}", e))?;
@@ -557,7 +561,10 @@ impl PtySession {
     }
 
     pub fn resize(&self, rows: u16, cols: u16) -> Result<(), String> {
-        let master = self.master.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let master = self
+            .master
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
         master
             .resize(PtySize {
                 rows,

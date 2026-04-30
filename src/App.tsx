@@ -901,7 +901,7 @@ function App() {
 
             {/* Skills panel overlay */}
             {isWorkspaceVisible && showSkills && (
-              <div className="w-72 border-l border-[var(--border-subtle)] relative">
+              <div className="w-[min(760px,48vw)] min-w-[520px] border-l border-[var(--border-subtle)] relative">
                 <SkillsPanel onClose={() => setShowSkills(false)} workingDir={workingDir} />
               </div>
             )}

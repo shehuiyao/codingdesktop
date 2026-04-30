@@ -81,7 +81,13 @@ fn codex_roots() -> Vec<(PathBuf, String)> {
 fn project_path_to_slug(project_path: &str) -> String {
     project_path
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect()
 }
 
@@ -132,7 +138,10 @@ fn read_claude_history() -> Result<Vec<HistoryEntry>, String> {
     Ok(entries)
 }
 
-fn read_claude_session(project_slug: &str, session_id: &str) -> Result<Vec<SessionMessage>, String> {
+fn read_claude_session(
+    project_slug: &str,
+    session_id: &str,
+) -> Result<Vec<SessionMessage>, String> {
     let base = claude_dir()
         .ok_or("Cannot find home directory")?
         .join("projects");
@@ -295,16 +304,8 @@ fn read_codex_history_prompts(root: &Path) -> HashMap<String, CodexPromptInfo> {
         let Some(text) = val["text"].as_str().and_then(shorten_display) else {
             continue;
         };
-        let timestamp = val["ts"]
-            .as_i64()
-            .and_then(timestamp_from_epoch_seconds);
-        prompts.insert(
-            session_id.to_string(),
-            CodexPromptInfo {
-                text,
-                timestamp,
-            },
-        );
+        let timestamp = val["ts"].as_i64().and_then(timestamp_from_epoch_seconds);
+        prompts.insert(session_id.to_string(), CodexPromptInfo { text, timestamp });
     }
 
     prompts
@@ -355,9 +356,7 @@ fn read_codex_session_summary(
             continue;
         }
         let payload = &val["payload"];
-        if payload["type"].as_str() != Some("message")
-            || payload["role"].as_str() != Some("user")
-        {
+        if payload["type"].as_str() != Some("message") || payload["role"].as_str() != Some("user") {
             continue;
         }
         if let Some(text) = extract_text_from_codex_content(&payload["content"]) {
@@ -497,9 +496,7 @@ fn read_codex_history() -> Result<Vec<HistoryEntry>, String> {
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .and_then(extract_session_id_from_filename);
-                let prompt_info = session_id
-                    .as_ref()
-                    .and_then(|id| prompts.get(id));
+                let prompt_info = session_id.as_ref().and_then(|id| prompts.get(id));
                 if let Some(summary) = read_codex_session_summary(&path, &root_tool, prompt_info) {
                     upsert_codex_entry(&mut entries_by_id, summary);
                 }

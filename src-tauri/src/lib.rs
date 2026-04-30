@@ -6,6 +6,8 @@ mod message_runner;
 use chat_runner::ChatProcess;
 use message_runner::PtySession;
 use std::collections::HashMap;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -63,8 +65,7 @@ fn migrate_app_data_dir() -> Result<(), String> {
     let data_dir = home.join(APP_DATA_DIR);
 
     if !legacy_dir.exists() {
-        std::fs::create_dir_all(&data_dir)
-            .map_err(|e| format!("创建新数据目录失败: {}", e))?;
+        std::fs::create_dir_all(&data_dir).map_err(|e| format!("创建新数据目录失败: {}", e))?;
         return Ok(());
     }
 
@@ -73,12 +74,10 @@ fn migrate_app_data_dir() -> Result<(), String> {
 
 fn copy_dir_missing(from: &Path, to: &Path) -> Result<(), String> {
     if !to.exists() {
-        std::fs::create_dir_all(to)
-            .map_err(|e| format!("创建迁移目录失败: {}", e))?;
+        std::fs::create_dir_all(to).map_err(|e| format!("创建迁移目录失败: {}", e))?;
     }
 
-    for entry in std::fs::read_dir(from)
-        .map_err(|e| format!("读取旧数据目录失败: {}", e))?
+    for entry in std::fs::read_dir(from).map_err(|e| format!("读取旧数据目录失败: {}", e))?
     {
         let entry = entry.map_err(|e| format!("读取旧数据项失败: {}", e))?;
         let source_path = entry.path();
@@ -100,8 +99,8 @@ fn find_local_storage_dbs(parent: &Path, result: &mut Vec<PathBuf>) -> Result<()
         return Ok(());
     }
 
-    for entry in std::fs::read_dir(parent)
-        .map_err(|e| format!("读取 WebKit 存储目录失败: {}", e))?
+    for entry in
+        std::fs::read_dir(parent).map_err(|e| format!("读取 WebKit 存储目录失败: {}", e))?
     {
         let entry = entry.map_err(|e| format!("读取 WebKit 存储项失败: {}", e))?;
         let path = entry.path();
@@ -279,10 +278,7 @@ fn read_networksetup_proxy() -> Option<SystemProxyConfig> {
 
     let content = String::from_utf8_lossy(&output.stdout);
     for service in content.lines().map(str::trim) {
-        if service.is_empty()
-            || service.starts_with("An asterisk")
-            || service.starts_with('*')
-        {
+        if service.is_empty() || service.starts_with("An asterisk") || service.starts_with('*') {
             continue;
         }
 
@@ -524,7 +520,10 @@ fn detect_running_launchpad_projects(
     let mut current: Option<ListeningProcess> = None;
 
     for line in String::from_utf8_lossy(&output.stdout).lines() {
-        if let Some(pid) = line.strip_prefix('p').and_then(|value| value.parse::<u32>().ok()) {
+        if let Some(pid) = line
+            .strip_prefix('p')
+            .and_then(|value| value.parse::<u32>().ok())
+        {
             if let Some(process) = current.take() {
                 processes.push(process);
             }
@@ -814,8 +813,12 @@ fn get_git_info(path: String) -> Result<GitInfo, String> {
         for line in String::from_utf8_lossy(output).lines() {
             let parts: Vec<&str> = line.split('\t').collect();
             if parts.len() >= 2 {
-                if let Ok(a) = parts[0].parse::<i64>() { *add += a; }
-                if let Ok(d) = parts[1].parse::<i64>() { *del += d; }
+                if let Ok(a) = parts[0].parse::<i64>() {
+                    *add += a;
+                }
+                if let Ok(d) = parts[1].parse::<i64>() {
+                    *del += d;
+                }
             }
         }
     };
@@ -828,7 +831,11 @@ fn get_git_info(path: String) -> Result<GitInfo, String> {
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
-        let default_branch = if has_origin_main { "origin/main" } else { "origin/master" };
+        let default_branch = if has_origin_main {
+            "origin/main"
+        } else {
+            "origin/master"
+        };
 
         if let Ok(output) = Command::new("git")
             .args(["diff", "--numstat", &format!("{}...HEAD", default_branch)])
@@ -852,7 +859,10 @@ fn get_git_info(path: String) -> Result<GitInfo, String> {
         }
     } else {
         // HEAD 不存在（新仓库无 commit）
-        for args in &[vec!["diff", "--cached", "--numstat"], vec!["diff", "--numstat"]] {
+        for args in &[
+            vec!["diff", "--cached", "--numstat"],
+            vec!["diff", "--numstat"],
+        ] {
             if let Ok(output) = Command::new("git").args(args).current_dir(&path).output() {
                 accumulate_numstat(&output.stdout, &mut additions, &mut deletions);
             }
@@ -1016,7 +1026,6 @@ fn get_commit_history(path: String, count: Option<u32>) -> Result<Vec<CommitEntr
     Ok(commits)
 }
 
-
 // ─── Bug Tracker 数据结构 ───
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1045,59 +1054,690 @@ struct BugsData {
 
 #[derive(serde::Serialize)]
 struct SkillInfo {
+    id: String,
     name: String,
     source: String,
     description: String,
     category: String,
     path: String,
+    enabled: bool,
+    can_toggle: bool,
+    usage_count: u64,
+    first_used_at: Option<String>,
+    last_used_at: Option<String>,
 }
 
-/// 从 SKILL.md frontmatter 中提取 description
-fn parse_skill_description(skill_dir: &std::path::Path) -> String {
-    let skill_md = skill_dir.join("SKILL.md");
-    if !skill_md.exists() {
-        return String::new();
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+struct SkillUsageEntry {
+    #[serde(default)]
+    count: u64,
+    #[serde(default)]
+    first_used_at: Option<String>,
+    #[serde(default)]
+    last_used_at: Option<String>,
+    #[serde(default)]
+    paths: Vec<String>,
+    #[serde(default)]
+    notes: Vec<serde_json::Value>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct SkillUsageStore {
+    #[serde(default = "skill_usage_version")]
+    version: u32,
+    #[serde(default)]
+    skills: HashMap<String, SkillUsageEntry>,
+}
+
+fn skill_usage_version() -> u32 {
+    1
+}
+
+const SKILL_USAGE_SCRIPT: &str = r#"#!/usr/bin/env python3
+"""Track local Codex skill usage counts."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+DEFAULT_STORE = Path.home() / ".codex" / "skill-usage.json"
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def load_store(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"version": 1, "skills": {}}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        backup = path.with_suffix(path.suffix + f".broken-{datetime.now().strftime('%Y%m%d%H%M%S')}")
+        path.rename(backup)
+        return {"version": 1, "skills": {}, "recovered_from": str(backup)}
+
+
+def save_store(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def record(args: argparse.Namespace) -> None:
+    store = load_store(args.store)
+    skills = store.setdefault("skills", {})
+    entry = skills.setdefault(
+        args.name,
+        {
+            "count": 0,
+            "first_used_at": None,
+            "last_used_at": None,
+            "paths": [],
+            "notes": [],
+        },
+    )
+
+    stamp = now_iso()
+    entry["count"] = int(entry.get("count", 0)) + 1
+    entry["first_used_at"] = entry.get("first_used_at") or stamp
+    entry["last_used_at"] = stamp
+
+    if args.path:
+        paths = entry.setdefault("paths", [])
+        if args.path not in paths:
+            paths.append(args.path)
+
+    if args.note:
+        notes = entry.setdefault("notes", [])
+        notes.append({"at": stamp, "text": args.note})
+        entry["notes"] = notes[-20:]
+
+    save_store(args.store, store)
+    print(f"recorded {args.name}: {entry['count']}")
+
+
+def report(args: argparse.Namespace) -> None:
+    store = load_store(args.store)
+    rows = sorted(
+        store.get("skills", {}).items(),
+        key=lambda item: (-int(item[1].get("count", 0)), item[0]),
+    )
+    if not rows:
+        print("No skill usage recorded yet.")
+        return
+
+    limit = args.limit or len(rows)
+    print("Skill usage counts")
+    print("==================")
+    for name, data in rows[:limit]:
+        print(f"{int(data.get('count', 0)):4d}  {name}  last={data.get('last_used_at', '-')}")
+
+
+def list_unused(args: argparse.Namespace) -> None:
+    store = load_store(args.store)
+    used = set(store.get("skills", {}).keys())
+    found: list[str] = []
+
+    for root in [Path(item).expanduser() for item in args.roots]:
+        if not root.exists():
+            continue
+        for marker_name in ("SKILL.md", "skill.md"):
+            for marker in root.rglob(marker_name):
+                found.append(marker.parent.name)
+
+    for name in sorted(set(found) - used):
+        print(name)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Track Codex skill usage.")
+    parser.add_argument("--store", type=Path, default=DEFAULT_STORE)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    record_parser = sub.add_parser("record", help="Increment one skill usage counter.")
+    record_parser.add_argument("name")
+    record_parser.add_argument("--path", default="")
+    record_parser.add_argument("--note", default="")
+    record_parser.set_defaults(func=record)
+
+    report_parser = sub.add_parser("report", help="Show usage counts.")
+    report_parser.add_argument("--limit", type=int, default=0)
+    report_parser.set_defaults(func=report)
+
+    unused_parser = sub.add_parser("unused", help="List installed skills with no recorded usage.")
+    unused_parser.add_argument(
+        "--roots",
+        nargs="*",
+        default=[str(Path.home() / ".codex" / "skills"), str(Path.home() / ".agents" / "skills")],
+    )
+    unused_parser.set_defaults(func=list_unused)
+
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
+"#;
+
+const SKILL_STATE_SCRIPT: &str = r#"#!/usr/bin/env python3
+"""Enable, disable, and list local Codex skills by moving skill folders."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+CODEX_HOME = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).expanduser()
+ACTIVE_ROOT = CODEX_HOME / "skills"
+DISABLED_ROOT = CODEX_HOME / "skills.disabled"
+STATE_FILE = CODEX_HOME / "skill-state.json"
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def is_skill_dir(path: Path) -> bool:
+    return (path / "SKILL.md").exists() or (path / "skill.md").exists()
+
+
+def skill_file(path: Path) -> Path:
+    upper = path / "SKILL.md"
+    lower = path / "skill.md"
+    if upper.exists():
+        return upper
+    if lower.exists():
+        return lower
+    raise FileNotFoundError(f"No SKILL.md or skill.md in {path}")
+
+
+def set_enabled_field(path: Path, enabled: bool) -> None:
+    file_path = skill_file(path)
+    text = file_path.read_text(encoding="utf-8")
+    value = "true" if enabled else "false"
+    lines = text.splitlines(keepends=True)
+
+    if lines and lines[0].strip() == "---":
+        end_index = None
+        for index in range(1, len(lines)):
+            if lines[index].strip() == "---":
+                end_index = index
+                break
+
+        if end_index is not None:
+            for index in range(1, end_index):
+                if lines[index].startswith("enabled:"):
+                    lines[index] = f"enabled: {value}\n"
+                    file_path.write_text("".join(lines), encoding="utf-8")
+                    return
+
+            insert_index = 1
+            for index in range(1, end_index):
+                if lines[index].startswith("name:"):
+                    insert_index = index + 1
+                    break
+            lines.insert(insert_index, f"enabled: {value}\n")
+            file_path.write_text("".join(lines), encoding="utf-8")
+            return
+
+    file_path.write_text(f"---\nenabled: {value}\n---\n\n{text}", encoding="utf-8")
+
+
+def load_state() -> dict[str, Any]:
+    if not STATE_FILE.exists():
+        return {"version": 1, "events": []}
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {"version": 1, "events": []}
+
+
+def save_state(data: dict[str, Any]) -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_FILE.with_name(f"{STATE_FILE.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, STATE_FILE)
+
+
+def record_event(action: str, name: str, src: Path, dst: Path, reason: str = "") -> None:
+    data = load_state()
+    data.setdefault("events", []).append(
+        {
+            "at": now_iso(),
+            "action": action,
+            "name": name,
+            "from": str(src),
+            "to": str(dst),
+            "reason": reason,
+        }
+    )
+    save_state(data)
+
+
+def move_skill(name: str, source_root: Path, target_root: Path, action: str, reason: str) -> None:
+    src = source_root / name
+    dst = target_root / name
+
+    if not src.exists():
+        raise SystemExit(f"{name} is not in {source_root}")
+    if not is_skill_dir(src):
+        raise SystemExit(f"{src} does not look like a skill folder")
+    if dst.exists():
+        raise SystemExit(f"{dst} already exists; refusing to overwrite")
+
+    target_root.mkdir(parents=True, exist_ok=True)
+    set_enabled_field(src, action == "enabled")
+    shutil.move(str(src), str(dst))
+    record_event(action, name, src, dst, reason)
+    print(f"{action}: {name}")
+
+
+def disable(args: argparse.Namespace) -> None:
+    for name in args.names:
+        move_skill(name, args.active_root, args.disabled_root, "disabled", args.reason)
+
+
+def enable(args: argparse.Namespace) -> None:
+    for name in args.names:
+        move_skill(name, args.disabled_root, args.active_root, "enabled", args.reason)
+
+
+def list_skills(args: argparse.Namespace) -> None:
+    active = sorted(path.name for path in args.active_root.iterdir() if path.is_dir() and is_skill_dir(path)) if args.active_root.exists() else []
+    disabled = sorted(path.name for path in args.disabled_root.iterdir() if path.is_dir() and is_skill_dir(path)) if args.disabled_root.exists() else []
+
+    print("Active skills")
+    print("=============")
+    for name in active:
+        print(f"on   {name}")
+
+    print("\nDisabled skills")
+    print("===============")
+    for name in disabled:
+        print(f"off  {name}")
+
+
+def sync(args: argparse.Namespace) -> None:
+    changed = 0
+    for root, enabled in [(args.active_root, True), (args.disabled_root, False)]:
+        if not root.exists():
+            continue
+        seen: set[Path] = set()
+        for marker_name in ("SKILL.md", "skill.md"):
+            for marker in sorted(root.rglob(marker_name)):
+                child = marker.parent
+                if child in seen:
+                    continue
+                seen.add(child)
+                set_enabled_field(child, enabled)
+                changed += 1
+    print(f"synced enabled fields for {changed} skills")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Toggle local Codex skills.")
+    parser.add_argument("--active-root", type=Path, default=ACTIVE_ROOT)
+    parser.add_argument("--disabled-root", type=Path, default=DISABLED_ROOT)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    disable_parser = sub.add_parser("disable", help="Hide active skills.")
+    disable_parser.add_argument("names", nargs="+")
+    disable_parser.add_argument("--reason", default="")
+    disable_parser.set_defaults(func=disable)
+
+    enable_parser = sub.add_parser("enable", help="Restore disabled skills.")
+    enable_parser.add_argument("names", nargs="+")
+    enable_parser.add_argument("--reason", default="")
+    enable_parser.set_defaults(func=enable)
+
+    list_parser = sub.add_parser("list", help="List active and disabled skills.")
+    list_parser.set_defaults(func=list_skills)
+
+    sync_parser = sub.add_parser("sync", help="Write enabled fields based on folder state.")
+    sync_parser.set_defaults(func=sync)
+
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
+"#;
+
+const SKILL_AGENTS_RULES: &str = r#"
+## Skill 使用计数
+
+当本次回复决定启用任何 skill 时，在读取该 skill 的 `SKILL.md` / `skill.md` 前，先执行一次：
+
+```bash
+python3 ~/.codex/scripts/skill_usage.py record "<skill-name>" --path "<skill-file-path>"
+```
+
+规则：
+- 每个 skill 每轮对话只记录 1 次，不按工具调用次数重复计数。
+- 同一轮使用多个 skill 时，每个 skill 都各记录 1 次。
+- 记录失败不阻塞任务，继续完成用户请求。
+- 查看统计时执行：
+
+```bash
+python3 ~/.codex/scripts/skill_usage.py report
+```
+
+## Skill 开关状态
+
+普通 skill 没有原生 `enabled` 字段；需要隐藏或恢复时，使用本地状态脚本移动目录：
+
+```bash
+# 查看开启/隐藏状态
+python3 ~/.codex/scripts/skill_state.py list
+
+# 隐藏 skill
+python3 ~/.codex/scripts/skill_state.py disable "<skill-name>" --reason "原因"
+
+# 恢复 skill
+python3 ~/.codex/scripts/skill_state.py enable "<skill-name>" --reason "原因"
+
+# 管理 .agents/skills 时追加目录参数
+python3 ~/.codex/scripts/skill_state.py \
+  --active-root ~/.agents/skills \
+  --disabled-root ~/.agents/skills.disabled \
+  list
+```
+
+规则：
+- `~/.codex/skills/<skill-name>` 表示开启。
+- `~/.codex/skills.disabled/<skill-name>` 表示隐藏。
+- `~/.agents/skills/<skill-name>` / `~/.agents/skills.disabled/<skill-name>` 同理。
+- `enabled: true/false` 是本地管理状态字段；真正影响加载的是目录是否在 active root 下。
+- 隐藏只是移动目录，不删除内容；后续可以随时恢复。
+"#;
+
+fn codex_home_dir() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+    Ok(home.join(".codex"))
+}
+
+fn skill_usage_store_path() -> Result<PathBuf, String> {
+    Ok(codex_home_dir()?.join("skill-usage.json"))
+}
+
+fn write_file_if_missing(path: &Path, content: &str) -> Result<(), String> {
+    if path.exists() {
+        return Ok(());
     }
-    let content = match std::fs::read_to_string(&skill_md) {
-        Ok(c) => c,
-        Err(_) => return String::new(),
-    };
-    // 解析 frontmatter: --- ... description: xxx ... ---
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
+    }
+    std::fs::write(path, content).map_err(|e| format!("写入文件失败: {}", e))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) -> Result<(), String> {
+    let metadata = std::fs::metadata(path).map_err(|e| format!("读取脚本权限失败: {}", e))?;
+    let mut permissions = metadata.permissions();
+    permissions.set_mode(permissions.mode() | 0o755);
+    std::fs::set_permissions(path, permissions).map_err(|e| format!("设置脚本权限失败: {}", e))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+fn ensure_skill_agents_rules(codex_dir: &Path) -> Result<(), String> {
+    let agents_path = codex_dir.join("AGENTS.md");
+    let existing = std::fs::read_to_string(&agents_path).unwrap_or_default();
+    if existing.contains("## Skill 使用计数") && existing.contains("## Skill 开关状态") {
+        return Ok(());
+    }
+
+    let mut output = existing;
+    if !output.is_empty() && !output.ends_with('\n') {
+        output.push('\n');
+    }
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    output.push_str(SKILL_AGENTS_RULES.trim_start());
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    write_file_if_missing(&agents_path, "")?;
+    std::fs::write(&agents_path, output).map_err(|e| format!("写入 AGENTS.md 失败: {}", e))?;
+    Ok(())
+}
+
+fn ensure_skill_management_files() -> Result<(), String> {
+    let codex_dir = codex_home_dir()?;
+    let scripts_dir = codex_dir.join("scripts");
+    std::fs::create_dir_all(&scripts_dir).map_err(|e| format!("创建 scripts 目录失败: {}", e))?;
+
+    let usage_script = scripts_dir.join("skill_usage.py");
+    write_file_if_missing(&usage_script, SKILL_USAGE_SCRIPT)?;
+    make_executable(&usage_script)?;
+
+    let state_script = scripts_dir.join("skill_state.py");
+    write_file_if_missing(&state_script, SKILL_STATE_SCRIPT)?;
+    make_executable(&state_script)?;
+
+    let usage_store = skill_usage_store_path()?;
+    write_file_if_missing(&usage_store, "{\n  \"version\": 1,\n  \"skills\": {}\n}\n")?;
+
+    ensure_skill_agents_rules(&codex_dir)?;
+    Ok(())
+}
+
+fn skill_marker_file(skill_dir: &Path) -> Option<PathBuf> {
+    let upper = skill_dir.join("SKILL.md");
+    if upper.exists() {
+        return Some(upper);
+    }
+    let lower = skill_dir.join("skill.md");
+    if lower.exists() {
+        return Some(lower);
+    }
+    None
+}
+
+fn parse_frontmatter_value(content: &str, key: &str) -> Option<String> {
     if !content.starts_with("---") {
-        return String::new();
+        return None;
     }
     if let Some(end) = content[3..].find("---") {
         let front = &content[3..3 + end];
         for line in front.lines() {
             let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("description:") {
-                let desc = rest.trim().trim_matches('"').trim_matches('\'');
-                // 处理多行 description（以 | 开头的 YAML 多行）
-                if desc.is_empty() || desc == "|" {
-                    // 取下一行非空内容
-                    for next_line in front.lines().skip_while(|l| !l.trim().starts_with("description:")).skip(1) {
+            if let Some(rest) = trimmed.strip_prefix(&format!("{}:", key)) {
+                let value = rest.trim().trim_matches('"').trim_matches('\'');
+                if value.is_empty() || value == "|" {
+                    for next_line in front
+                        .lines()
+                        .skip_while(|l| !l.trim().starts_with(&format!("{}:", key)))
+                        .skip(1)
+                    {
                         let next = next_line.trim();
                         if !next.is_empty() && !next.contains(':') {
-                            return next.to_string();
+                            return Some(next.to_string());
                         }
                         break;
                     }
-                    return String::new();
+                    return None;
                 }
-                return desc.to_string();
+                return Some(value.to_string());
             }
         }
     }
-    String::new()
+    None
+}
+
+/// 从 SKILL.md / skill.md frontmatter 中提取 description
+fn parse_skill_description(skill_dir: &Path) -> String {
+    let Some(marker) = skill_marker_file(skill_dir) else {
+        return String::new();
+    };
+    let content = match std::fs::read_to_string(&marker) {
+        Ok(c) => c,
+        Err(_) => return String::new(),
+    };
+    parse_frontmatter_value(&content, "description").unwrap_or_default()
+}
+
+fn parse_skill_enabled_field(skill_dir: &Path) -> Option<bool> {
+    let marker = skill_marker_file(skill_dir)?;
+    let content = std::fs::read_to_string(&marker).ok()?;
+    parse_frontmatter_value(&content, "enabled").and_then(|value| {
+        match value.to_lowercase().as_str() {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        }
+    })
+}
+
+fn set_skill_enabled_field(skill_dir: &Path, enabled: bool) -> Result<(), String> {
+    let marker = skill_marker_file(skill_dir).ok_or("没有找到 SKILL.md 或 skill.md")?;
+    let text =
+        std::fs::read_to_string(&marker).map_err(|e| format!("读取 skill 文件失败: {}", e))?;
+    let value = if enabled { "true" } else { "false" };
+    let mut lines: Vec<String> = text.lines().map(|line| format!("{}\n", line)).collect();
+
+    if text.ends_with('\n') == false && !lines.is_empty() {
+        if let Some(last) = lines.last_mut() {
+            *last = last.trim_end_matches('\n').to_string();
+        }
+    }
+
+    if !lines.is_empty() && lines[0].trim() == "---" {
+        if let Some(end_index) = lines.iter().enumerate().skip(1).find_map(|(index, line)| {
+            if line.trim() == "---" {
+                Some(index)
+            } else {
+                None
+            }
+        }) {
+            for index in 1..end_index {
+                if lines[index].starts_with("enabled:") {
+                    lines[index] = format!("enabled: {}\n", value);
+                    std::fs::write(&marker, lines.concat())
+                        .map_err(|e| format!("写入 enabled 字段失败: {}", e))?;
+                    return Ok(());
+                }
+            }
+
+            let mut insert_index = 1;
+            for index in 1..end_index {
+                if lines[index].starts_with("name:") {
+                    insert_index = index + 1;
+                    break;
+                }
+            }
+            lines.insert(insert_index, format!("enabled: {}\n", value));
+            std::fs::write(&marker, lines.concat())
+                .map_err(|e| format!("写入 enabled 字段失败: {}", e))?;
+            return Ok(());
+        }
+    }
+
+    let output = format!("---\nenabled: {}\n---\n\n{}", value, text);
+    std::fs::write(&marker, output).map_err(|e| format!("写入 enabled 字段失败: {}", e))?;
+    Ok(())
+}
+
+fn collect_skill_dirs(root: &Path, result: &mut Vec<PathBuf>) {
+    if !root.exists() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if skill_marker_file(&path).is_some() {
+            result.push(path);
+            continue;
+        }
+        collect_skill_dirs(&path, result);
+    }
+}
+
+fn read_skill_usage_store() -> SkillUsageStore {
+    let Ok(path) = skill_usage_store_path() else {
+        return SkillUsageStore::default();
+    };
+    if !path.exists() {
+        return SkillUsageStore {
+            version: 1,
+            skills: HashMap::new(),
+        };
+    }
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    serde_json::from_str(&content).unwrap_or_default()
+}
+
+fn write_skill_usage_store(store: &SkillUsageStore) -> Result<(), String> {
+    let path = skill_usage_store_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建 skill usage 目录失败: {}", e))?;
+    }
+    let output = serde_json::to_string_pretty(store)
+        .map_err(|e| format!("序列化 skill usage 失败: {}", e))?;
+    std::fs::write(path, format!("{}\n", output))
+        .map_err(|e| format!("写入 skill usage 失败: {}", e))?;
+    Ok(())
+}
+
+fn read_legacy_skill_counts() -> HashMap<String, u64> {
+    let mut result = HashMap::new();
+    let Ok(path) = app_data_dir().map(|dir| dir.join("skill_usage.json")) else {
+        return result;
+    };
+    if !path.exists() {
+        return result;
+    }
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    let json: serde_json::Value = serde_json::from_str(&content).unwrap_or_default();
+    if let Some(counts) = json.get("counts").and_then(|value| value.as_object()) {
+        for (name, value) in counts {
+            if let Some(count) = value.as_u64() {
+                result.insert(name.to_string(), count);
+            }
+        }
+    }
+    result
 }
 
 /// 根据技能名称判断分类
 fn categorize_skill(name: &str, source: &str) -> String {
-    if source == "plugin" {
+    if source == "plugin" || source == "system" {
         return "official".to_string();
     }
     let senguo_prefixes = [
-        "common-", "publish-", "merge-", "testing-", "senguo", "peon-ping",
+        "common-",
+        "publish-",
+        "merge-",
+        "testing-",
+        "senguo",
+        "peon-ping",
     ];
     let lower = name.to_lowercase();
     for prefix in &senguo_prefixes {
@@ -1108,34 +1748,96 @@ fn categorize_skill(name: &str, source: &str) -> String {
     "personal".to_string()
 }
 
+fn push_skill_info(
+    skills: &mut Vec<SkillInfo>,
+    skill_dir: &Path,
+    source: &str,
+    root_enabled: bool,
+    can_toggle: bool,
+    usage: &HashMap<String, SkillUsageEntry>,
+) {
+    let Some(name) = skill_dir.file_name().and_then(|value| value.to_str()) else {
+        return;
+    };
+    let enabled = parse_skill_enabled_field(skill_dir).unwrap_or(root_enabled) && root_enabled;
+    let usage_entry = usage.get(name).cloned().unwrap_or_default();
+    let source_label = if source == "codex" && skill_dir.to_string_lossy().contains("/.system/") {
+        "system"
+    } else {
+        source
+    };
+    skills.push(SkillInfo {
+        id: skill_dir.to_string_lossy().to_string(),
+        name: name.to_string(),
+        source: source_label.to_string(),
+        description: parse_skill_description(skill_dir),
+        category: categorize_skill(name, source_label),
+        path: skill_dir.to_string_lossy().to_string(),
+        enabled,
+        can_toggle,
+        usage_count: usage_entry.count,
+        first_used_at: usage_entry.first_used_at,
+        last_used_at: usage_entry.last_used_at,
+    });
+}
+
+fn collect_skills_from_pair(
+    skills: &mut Vec<SkillInfo>,
+    active_root: &Path,
+    disabled_root: &Path,
+    source: &str,
+    usage: &HashMap<String, SkillUsageEntry>,
+) {
+    let mut active_dirs = Vec::new();
+    collect_skill_dirs(active_root, &mut active_dirs);
+    for dir in active_dirs {
+        push_skill_info(skills, &dir, source, true, true, usage);
+    }
+
+    let mut disabled_dirs = Vec::new();
+    collect_skill_dirs(disabled_root, &mut disabled_dirs);
+    for dir in disabled_dirs {
+        push_skill_info(skills, &dir, source, false, true, usage);
+    }
+}
+
 #[tauri::command]
 fn list_skills() -> Result<Vec<SkillInfo>, String> {
+    ensure_skill_management_files()?;
     let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+    let codex_dir = home.join(".codex");
+    let agents_dir = home.join(".agents");
     let claude_dir = home.join(".claude");
     let mut skills = Vec::new();
-
-    // 自定义技能
-    let skills_dir = claude_dir.join("skills");
-    if skills_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&skills_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Some(name) = entry.file_name().to_str() {
-                        let description = parse_skill_description(&path);
-                        let category = categorize_skill(name, "custom");
-                        skills.push(SkillInfo {
-                            name: name.to_string(),
-                            source: "custom".to_string(),
-                            description,
-                            category,
-                            path: path.to_string_lossy().to_string(),
-                        });
-                    }
-                }
-            }
-        }
+    let mut usage = read_skill_usage_store().skills;
+    for (name, count) in read_legacy_skill_counts() {
+        usage.entry(name).or_insert_with(|| SkillUsageEntry {
+            count,
+            ..SkillUsageEntry::default()
+        });
     }
+
+    collect_skills_from_pair(
+        &mut skills,
+        &codex_dir.join("skills"),
+        &codex_dir.join("skills.disabled"),
+        "codex",
+        &usage,
+    );
+    collect_skills_from_pair(
+        &mut skills,
+        &agents_dir.join("skills"),
+        &agents_dir.join("skills.disabled"),
+        "agents",
+        &usage,
+    );
+    collect_skills_from_pair(
+        &mut skills,
+        &claude_dir.join("skills"),
+        &claude_dir.join("skills.disabled"),
+        "claude",
+        &usage,
+    );
 
     // 插件技能：读取每个插件下的 skills/ 子目录
     let plugins_file = claude_dir.join("plugins").join("installed_plugins.json");
@@ -1146,21 +1848,38 @@ fn list_skills() -> Result<Vec<SkillInfo>, String> {
                     for (_key, val) in plugins {
                         if let Some(arr) = val.as_array() {
                             if let Some(first) = arr.first() {
-                                if let Some(install_path) = first.get("installPath").and_then(|p| p.as_str()) {
-                                    let skills_path = std::path::Path::new(install_path).join("skills");
+                                if let Some(install_path) =
+                                    first.get("installPath").and_then(|p| p.as_str())
+                                {
+                                    let skills_path =
+                                        std::path::Path::new(install_path).join("skills");
                                     if skills_path.exists() {
                                         if let Ok(entries) = std::fs::read_dir(&skills_path) {
                                             for entry in entries.flatten() {
                                                 let path = entry.path();
                                                 if path.is_dir() {
                                                     if let Some(name) = entry.file_name().to_str() {
-                                                        let description = parse_skill_description(&path);
+                                                        let description =
+                                                            parse_skill_description(&path);
+                                                        let usage_entry = usage
+                                                            .get(name)
+                                                            .cloned()
+                                                            .unwrap_or_default();
                                                         skills.push(SkillInfo {
+                                                            id: path.to_string_lossy().to_string(),
                                                             name: name.to_string(),
                                                             source: "plugin".to_string(),
                                                             description,
                                                             category: "official".to_string(),
-                                                            path: path.to_string_lossy().to_string(),
+                                                            path: path
+                                                                .to_string_lossy()
+                                                                .to_string(),
+                                                            enabled: true,
+                                                            can_toggle: false,
+                                                            usage_count: usage_entry.count,
+                                                            first_used_at: usage_entry
+                                                                .first_used_at,
+                                                            last_used_at: usage_entry.last_used_at,
                                                         });
                                                     }
                                                 }
@@ -1176,8 +1895,101 @@ fn list_skills() -> Result<Vec<SkillInfo>, String> {
         }
     }
 
-    skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    skills.sort_by(|a, b| {
+        b.usage_count
+            .cmp(&a.usage_count)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| a.source.cmp(&b.source))
+    });
     Ok(skills)
+}
+
+fn known_skill_root_pairs() -> Result<Vec<(PathBuf, PathBuf)>, String> {
+    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+    Ok(vec![
+        (
+            home.join(".codex").join("skills"),
+            home.join(".codex").join("skills.disabled"),
+        ),
+        (
+            home.join(".agents").join("skills"),
+            home.join(".agents").join("skills.disabled"),
+        ),
+        (
+            home.join(".claude").join("skills"),
+            home.join(".claude").join("skills.disabled"),
+        ),
+    ])
+}
+
+#[tauri::command]
+fn toggle_installed_skill(skill_path: String, enabled: bool) -> Result<(), String> {
+    ensure_skill_management_files()?;
+    let source = PathBuf::from(&skill_path);
+    if !source.exists() {
+        return Err("技能目录不存在，可能已经被移动，请刷新列表".to_string());
+    }
+    if skill_marker_file(&source).is_none() {
+        return Err("这个目录不是有效的 skill".to_string());
+    }
+
+    for (active_root, disabled_root) in known_skill_root_pairs()? {
+        if enabled && source.starts_with(&disabled_root) {
+            let relative = source
+                .strip_prefix(&disabled_root)
+                .map_err(|_| "计算技能路径失败".to_string())?;
+            let target = active_root.join(relative);
+            if target.exists() {
+                return Err("目标启用目录中已存在同名 skill".to_string());
+            }
+            set_skill_enabled_field(&source, true)?;
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("创建启用目录失败: {}", e))?;
+            }
+            std::fs::rename(&source, &target).map_err(|e| format!("启用 skill 失败: {}", e))?;
+            return Ok(());
+        }
+
+        if !enabled && source.starts_with(&active_root) {
+            let relative = source
+                .strip_prefix(&active_root)
+                .map_err(|_| "计算技能路径失败".to_string())?;
+            let target = disabled_root.join(relative);
+            if target.exists() {
+                return Err("隐藏目录中已存在同名 skill".to_string());
+            }
+            set_skill_enabled_field(&source, false)?;
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("创建隐藏目录失败: {}", e))?;
+            }
+            std::fs::rename(&source, &target).map_err(|e| format!("隐藏 skill 失败: {}", e))?;
+            return Ok(());
+        }
+    }
+
+    Err("这个 skill 不在可管理的本地目录里".to_string())
+}
+
+#[tauri::command]
+fn sync_skill_enabled_fields() -> Result<u32, String> {
+    ensure_skill_management_files()?;
+    let mut changed = 0;
+    for (active_root, disabled_root) in known_skill_root_pairs()? {
+        let mut active_dirs = Vec::new();
+        collect_skill_dirs(&active_root, &mut active_dirs);
+        for dir in active_dirs {
+            set_skill_enabled_field(&dir, true)?;
+            changed += 1;
+        }
+
+        let mut disabled_dirs = Vec::new();
+        collect_skill_dirs(&disabled_root, &mut disabled_dirs);
+        for dir in disabled_dirs {
+            set_skill_enabled_field(&dir, false)?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
 }
 
 #[tauri::command]
@@ -1188,12 +2000,16 @@ fn get_disabled_skills(project_path: String) -> Result<Vec<String>, String> {
     if !settings_path.exists() {
         return Ok(Vec::new());
     }
-    let content = std::fs::read_to_string(&settings_path)
-        .map_err(|e| format!("读取配置失败: {}", e))?;
-    let json: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("解析配置失败: {}", e))?;
+    let content =
+        std::fs::read_to_string(&settings_path).map_err(|e| format!("读取配置失败: {}", e))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("解析配置失败: {}", e))?;
     let mut disabled = Vec::new();
-    if let Some(deny) = json.get("permissions").and_then(|p| p.get("deny")).and_then(|d| d.as_array()) {
+    if let Some(deny) = json
+        .get("permissions")
+        .and_then(|p| p.get("deny"))
+        .and_then(|d| d.as_array())
+    {
         for item in deny {
             if let Some(s) = item.as_str() {
                 // 匹配 "Skill(xxx)" 格式
@@ -1207,7 +2023,11 @@ fn get_disabled_skills(project_path: String) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-fn toggle_skill_for_project(project_path: String, skill_name: String, enabled: bool) -> Result<(), String> {
+fn toggle_skill_for_project(
+    project_path: String,
+    skill_name: String,
+    enabled: bool,
+) -> Result<(), String> {
     let claude_dir = std::path::Path::new(&project_path).join(".claude");
     if !claude_dir.exists() {
         std::fs::create_dir_all(&claude_dir)
@@ -1215,8 +2035,8 @@ fn toggle_skill_for_project(project_path: String, skill_name: String, enabled: b
     }
     let settings_path = claude_dir.join("settings.local.json");
     let mut json: serde_json::Value = if settings_path.exists() {
-        let content = std::fs::read_to_string(&settings_path)
-            .map_err(|e| format!("读取配置失败: {}", e))?;
+        let content =
+            std::fs::read_to_string(&settings_path).map_err(|e| format!("读取配置失败: {}", e))?;
         serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
     } else {
         serde_json::json!({})
@@ -1232,7 +2052,8 @@ fn toggle_skill_for_project(project_path: String, skill_name: String, enabled: b
         json["permissions"]["deny"] = serde_json::json!([]);
     }
 
-    let deny = json["permissions"]["deny"].as_array_mut()
+    let deny = json["permissions"]["deny"]
+        .as_array_mut()
         .ok_or("deny 字段类型异常")?;
 
     if enabled {
@@ -1255,10 +2076,8 @@ fn toggle_skill_for_project(project_path: String, skill_name: String, enabled: b
         }
     }
 
-    let output = serde_json::to_string_pretty(&json)
-        .map_err(|e| format!("序列化失败: {}", e))?;
-    std::fs::write(&settings_path, output)
-        .map_err(|e| format!("写入配置失败: {}", e))?;
+    let output = serde_json::to_string_pretty(&json).map_err(|e| format!("序列化失败: {}", e))?;
+    std::fs::write(&settings_path, output).map_err(|e| format!("写入配置失败: {}", e))?;
     Ok(())
 }
 
@@ -1273,12 +2092,16 @@ fn get_global_disabled_skills() -> Result<Vec<String>, String> {
     if !settings_path.exists() {
         return Ok(Vec::new());
     }
-    let content = std::fs::read_to_string(&settings_path)
-        .map_err(|e| format!("读取全局配置失败: {}", e))?;
-    let json: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("解析全局配置失败: {}", e))?;
+    let content =
+        std::fs::read_to_string(&settings_path).map_err(|e| format!("读取全局配置失败: {}", e))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("解析全局配置失败: {}", e))?;
     let mut disabled = Vec::new();
-    if let Some(deny) = json.get("permissions").and_then(|p| p.get("deny")).and_then(|d| d.as_array()) {
+    if let Some(deny) = json
+        .get("permissions")
+        .and_then(|p| p.get("deny"))
+        .and_then(|d| d.as_array())
+    {
         for item in deny {
             if let Some(s) = item.as_str() {
                 if let Some(name) = s.strip_prefix("Skill(").and_then(|r| r.strip_suffix(')')) {
@@ -1317,7 +2140,8 @@ fn toggle_global_skill(skill_name: String, enabled: bool) -> Result<(), String> 
         json["permissions"]["deny"] = serde_json::json!([]);
     }
 
-    let deny = json["permissions"]["deny"].as_array_mut()
+    let deny = json["permissions"]["deny"]
+        .as_array_mut()
         .ok_or("deny 字段类型异常")?;
 
     if enabled {
@@ -1337,10 +2161,8 @@ fn toggle_global_skill(skill_name: String, enabled: bool) -> Result<(), String> 
         }
     }
 
-    let output = serde_json::to_string_pretty(&json)
-        .map_err(|e| format!("序列化失败: {}", e))?;
-    std::fs::write(&settings_path, output)
-        .map_err(|e| format!("写入全局配置失败: {}", e))?;
+    let output = serde_json::to_string_pretty(&json).map_err(|e| format!("序列化失败: {}", e))?;
+    std::fs::write(&settings_path, output).map_err(|e| format!("写入全局配置失败: {}", e))?;
     Ok(())
 }
 
@@ -1358,8 +2180,7 @@ struct FeedbackEntry {
 fn submit_feedback(content: String) -> Result<(), String> {
     let data_dir = app_data_dir()?;
     if !data_dir.exists() {
-        std::fs::create_dir_all(&data_dir)
-            .map_err(|e| format!("创建目录失败: {}", e))?;
+        std::fs::create_dir_all(&data_dir).map_err(|e| format!("创建目录失败: {}", e))?;
     }
     let feedback_file = data_dir.join("feedback.json");
     let mut feedbacks: Vec<FeedbackEntry> = if feedback_file.exists() {
@@ -1376,21 +2197,34 @@ fn submit_feedback(content: String) -> Result<(), String> {
         timestamp: now.to_rfc3339(),
     });
 
-    let output = serde_json::to_string_pretty(&feedbacks)
-        .map_err(|e| format!("序列化失败: {}", e))?;
-    std::fs::write(&feedback_file, output)
-        .map_err(|e| format!("写入失败: {}", e))?;
+    let output =
+        serde_json::to_string_pretty(&feedbacks).map_err(|e| format!("序列化失败: {}", e))?;
+    std::fs::write(&feedback_file, output).map_err(|e| format!("写入失败: {}", e))?;
 
     // 同步创建 GitHub Issue（构建时注入 token）
     if let Some(token) = option_env!("GITHUB_FEEDBACK_TOKEN") {
         let title = if content.len() > 50 {
-            format!("[用户反馈] {}...", &content[..content.char_indices().nth(50).map(|(i,_)|i).unwrap_or(content.len())])
+            format!(
+                "[用户反馈] {}...",
+                &content[..content
+                    .char_indices()
+                    .nth(50)
+                    .map(|(i, _)| i)
+                    .unwrap_or(content.len())]
+            )
         } else {
             format!("[用户反馈] {}", &content)
         };
-        let body = format!("## 用户反馈\n\n{}\n\n---\n*提交时间: {}*", content, now.to_rfc3339());
+        let body = format!(
+            "## 用户反馈\n\n{}\n\n---\n*提交时间: {}*",
+            content,
+            now.to_rfc3339()
+        );
         let _ = reqwest::blocking::Client::new()
-            .post(format!("https://api.github.com/repos/{}/issues", FEEDBACK_REPO))
+            .post(format!(
+                "https://api.github.com/repos/{}/issues",
+                FEEDBACK_REPO
+            ))
             .header("Authorization", format!("Bearer {}", token))
             .header("User-Agent", "coding-desktop")
             .header("Accept", "application/vnd.github+json")
@@ -1412,57 +2246,46 @@ fn get_feedbacks() -> Result<Vec<FeedbackEntry>, String> {
     if !feedback_file.exists() {
         return Ok(Vec::new());
     }
-    let content = std::fs::read_to_string(&feedback_file)
-        .map_err(|e| format!("读取失败: {}", e))?;
+    let content =
+        std::fs::read_to_string(&feedback_file).map_err(|e| format!("读取失败: {}", e))?;
     let feedbacks: Vec<FeedbackEntry> = serde_json::from_str(&content).unwrap_or_default();
     Ok(feedbacks)
 }
 
-// ---- 技能使用次数统计 ----
-
-#[derive(serde::Serialize, serde::Deserialize, Default)]
-struct SkillUsageMap {
-    counts: HashMap<String, u32>,
-}
-
 /// 记录技能使用一次
 #[tauri::command]
-fn record_skill_usage(skill_name: String) -> Result<u32, String> {
-    let data_dir = app_data_dir()?;
-    if !data_dir.exists() {
-        std::fs::create_dir_all(&data_dir)
-            .map_err(|e| format!("创建目录失败: {}", e))?;
+fn record_skill_usage(skill_name: String) -> Result<u64, String> {
+    ensure_skill_management_files()?;
+    let mut store = read_skill_usage_store();
+    store.version = 1;
+    let now = chrono::Utc::now().to_rfc3339();
+    let entry = store
+        .skills
+        .entry(skill_name)
+        .or_insert_with(SkillUsageEntry::default);
+    entry.count += 1;
+    if entry.first_used_at.is_none() {
+        entry.first_used_at = Some(now.clone());
     }
-    let usage_file = data_dir.join("skill_usage.json");
-    let mut usage: SkillUsageMap = if usage_file.exists() {
-        let content = std::fs::read_to_string(&usage_file).unwrap_or_default();
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        SkillUsageMap::default()
-    };
+    entry.last_used_at = Some(now);
+    let new_count = entry.count;
 
-    let count = usage.counts.entry(skill_name).or_insert(0);
-    *count += 1;
-    let new_count = *count;
-
-    let output = serde_json::to_string_pretty(&usage)
-        .map_err(|e| format!("序列化失败: {}", e))?;
-    std::fs::write(&usage_file, output)
-        .map_err(|e| format!("写入失败: {}", e))?;
+    write_skill_usage_store(&store)?;
     Ok(new_count)
 }
 
 /// 获取所有技能的使用次数
 #[tauri::command]
-fn get_skill_usage() -> Result<HashMap<String, u32>, String> {
-    let usage_file = app_data_dir()?.join("skill_usage.json");
-    if !usage_file.exists() {
-        return Ok(HashMap::new());
+fn get_skill_usage() -> Result<HashMap<String, u64>, String> {
+    ensure_skill_management_files()?;
+    let mut counts = HashMap::new();
+    for (name, entry) in read_skill_usage_store().skills {
+        counts.insert(name, entry.count);
     }
-    let content = std::fs::read_to_string(&usage_file)
-        .map_err(|e| format!("读取失败: {}", e))?;
-    let usage: SkillUsageMap = serde_json::from_str(&content).unwrap_or_default();
-    Ok(usage.counts)
+    for (name, count) in read_legacy_skill_counts() {
+        counts.entry(name).or_insert(count);
+    }
+    Ok(counts)
 }
 
 // ---- Claude Code 使用统计 ----
@@ -1484,10 +2307,10 @@ fn get_usage_stats() -> Result<UsageStats, String> {
     if !stats_file.exists() {
         return Ok(UsageStats::default());
     }
-    let content = std::fs::read_to_string(&stats_file)
-        .map_err(|e| format!("读取统计失败: {}", e))?;
-    let json: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("解析统计失败: {}", e))?;
+    let content =
+        std::fs::read_to_string(&stats_file).map_err(|e| format!("读取统计失败: {}", e))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("解析统计失败: {}", e))?;
 
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let mut stats = UsageStats::default();
@@ -1495,9 +2318,18 @@ fn get_usage_stats() -> Result<UsageStats, String> {
     if let Some(daily) = json.get("dailyActivity").and_then(|d| d.as_array()) {
         for entry in daily {
             if entry.get("date").and_then(|d| d.as_str()) == Some(&today) {
-                stats.today_messages = entry.get("messageCount").and_then(|v| v.as_u64()).unwrap_or(0);
-                stats.today_sessions = entry.get("sessionCount").and_then(|v| v.as_u64()).unwrap_or(0);
-                stats.today_tool_calls = entry.get("toolCallCount").and_then(|v| v.as_u64()).unwrap_or(0);
+                stats.today_messages = entry
+                    .get("messageCount")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                stats.today_sessions = entry
+                    .get("sessionCount")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                stats.today_tool_calls = entry
+                    .get("toolCallCount")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
                 break;
             }
         }
@@ -1518,7 +2350,9 @@ fn open_terminal(path: String) -> Result<(), String> {
         .args(["-a", "Terminal", &path])
         .spawn()
         .map_err(|e| format!("Failed to open Terminal: {}", e))?;
-    std::thread::spawn(move || { let _ = child.wait(); });
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
     Ok(())
 }
 
@@ -1529,13 +2363,17 @@ fn reveal_in_finder(path: String) -> Result<(), String> {
         .args(["-R", &path])
         .spawn()
         .map_err(|e| format!("Failed to reveal in Finder: {}", e))?;
-    std::thread::spawn(move || { let _ = child.wait(); });
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
     Ok(())
 }
 
 #[tauri::command]
 fn confirm_close(window: tauri::Window) -> Result<(), String> {
-    window.destroy().map_err(|e| format!("Failed to close: {}", e))
+    window
+        .destroy()
+        .map_err(|e| format!("Failed to close: {}", e))
 }
 
 // ─── Bug Tracker 命令 ───
@@ -1612,11 +2450,11 @@ fn list_bugs(working_dir: String) -> Result<BugsData, String> {
         return Ok(empty);
     }
 
-    let content = std::fs::read_to_string(&bugs_path)
-        .map_err(|e| format!("读取 bugs.json 失败: {}", e))?;
+    let content =
+        std::fs::read_to_string(&bugs_path).map_err(|e| format!("读取 bugs.json 失败: {}", e))?;
 
-    let data: BugsData = serde_json::from_str(&content)
-        .map_err(|e| format!("解析 bugs.json 失败: {}", e))?;
+    let data: BugsData =
+        serde_json::from_str(&content).map_err(|e| format!("解析 bugs.json 失败: {}", e))?;
 
     // 校验项目归属：如果 bugs.json 记录了 project_root，则只在匹配时返回数据
     if let Some(ref stored_root) = data.project_root {
@@ -1631,20 +2469,25 @@ fn list_bugs(working_dir: String) -> Result<BugsData, String> {
 }
 
 #[tauri::command]
-fn update_bug_status(working_dir: String, bug_id: String, new_status: String) -> Result<BugEntry, String> {
+fn update_bug_status(
+    working_dir: String,
+    bug_id: String,
+    new_status: String,
+) -> Result<BugEntry, String> {
     let bugs_path = get_bugs_json_path(&working_dir)?;
 
     if !bugs_path.exists() {
         return Err("bugs.json 不存在".to_string());
     }
 
-    let content = std::fs::read_to_string(&bugs_path)
-        .map_err(|e| format!("读取失败: {}", e))?;
+    let content = std::fs::read_to_string(&bugs_path).map_err(|e| format!("读取失败: {}", e))?;
 
-    let mut data: BugsData = serde_json::from_str(&content)
-        .map_err(|e| format!("解析失败: {}", e))?;
+    let mut data: BugsData =
+        serde_json::from_str(&content).map_err(|e| format!("解析失败: {}", e))?;
 
-    let bug = data.bugs.iter_mut()
+    let bug = data
+        .bugs
+        .iter_mut()
         .find(|b| b.id == bug_id)
         .ok_or(format!("未找到 Bug: {}", bug_id))?;
 
@@ -1658,29 +2501,32 @@ fn update_bug_status(working_dir: String, bug_id: String, new_status: String) ->
 
     let updated_bug = bug.clone();
 
-    let json = serde_json::to_string_pretty(&data)
-        .map_err(|e| format!("序列化失败: {}", e))?;
-    std::fs::write(&bugs_path, json)
-        .map_err(|e| format!("写入失败: {}", e))?;
+    let json = serde_json::to_string_pretty(&data).map_err(|e| format!("序列化失败: {}", e))?;
+    std::fs::write(&bugs_path, json).map_err(|e| format!("写入失败: {}", e))?;
 
     Ok(updated_bug)
 }
 
 #[tauri::command]
-fn update_bug_priority(working_dir: String, bug_id: String, new_priority: String) -> Result<BugEntry, String> {
+fn update_bug_priority(
+    working_dir: String,
+    bug_id: String,
+    new_priority: String,
+) -> Result<BugEntry, String> {
     let bugs_path = get_bugs_json_path(&working_dir)?;
 
     if !bugs_path.exists() {
         return Err("bugs.json 不存在".to_string());
     }
 
-    let content = std::fs::read_to_string(&bugs_path)
-        .map_err(|e| format!("读取失败: {}", e))?;
+    let content = std::fs::read_to_string(&bugs_path).map_err(|e| format!("读取失败: {}", e))?;
 
-    let mut data: BugsData = serde_json::from_str(&content)
-        .map_err(|e| format!("解析失败: {}", e))?;
+    let mut data: BugsData =
+        serde_json::from_str(&content).map_err(|e| format!("解析失败: {}", e))?;
 
-    let bug = data.bugs.iter_mut()
+    let bug = data
+        .bugs
+        .iter_mut()
         .find(|b| b.id == bug_id)
         .ok_or(format!("未找到 Bug: {}", bug_id))?;
 
@@ -1694,10 +2540,8 @@ fn update_bug_priority(working_dir: String, bug_id: String, new_priority: String
 
     let updated_bug = bug.clone();
 
-    let json = serde_json::to_string_pretty(&data)
-        .map_err(|e| format!("序列化失败: {}", e))?;
-    std::fs::write(&bugs_path, json)
-        .map_err(|e| format!("写入失败: {}", e))?;
+    let json = serde_json::to_string_pretty(&data).map_err(|e| format!("序列化失败: {}", e))?;
+    std::fs::write(&bugs_path, json).map_err(|e| format!("写入失败: {}", e))?;
 
     Ok(updated_bug)
 }
@@ -1706,8 +2550,7 @@ fn update_bug_priority(working_dir: String, bug_id: String, new_priority: String
 #[tauri::command]
 fn get_bug_image(working_dir: String, image_path: String) -> Result<String, String> {
     let bugs_path = get_bugs_json_path(&working_dir)?;
-    let bugs_dir = bugs_path.parent()
-        .ok_or("无法获取 bugs 目录")?;
+    let bugs_dir = bugs_path.parent().ok_or("无法获取 bugs 目录")?;
 
     let full_path = bugs_dir.join(&image_path);
 
@@ -1715,13 +2558,13 @@ fn get_bug_image(working_dir: String, image_path: String) -> Result<String, Stri
         return Err(format!("图片不存在: {}", image_path));
     }
 
-    let bytes = std::fs::read(&full_path)
-        .map_err(|e| format!("读取图片失败: {}", e))?;
+    let bytes = std::fs::read(&full_path).map_err(|e| format!("读取图片失败: {}", e))?;
 
     use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
 
-    let ext = full_path.extension()
+    let ext = full_path
+        .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("png")
         .to_lowercase();
@@ -1753,12 +2596,48 @@ struct QuickActionsConfig {
 
 fn default_quick_actions() -> Vec<QuickAction> {
     vec![
-        QuickAction { label: "录入 Bug".into(), command: "/xy-bug-track".into(), icon: "\u{1f41b}".into(), description: "录入 bug 反馈".into(), color: "red".into() },
-        QuickAction { label: "修 Bug".into(), command: "/xy-bug-fix".into(), icon: "\u{1f527}".into(), description: "从 bug 列表选择并修复".into(), color: "orange".into() },
-        QuickAction { label: "发布测试服".into(), command: "发布测试服".into(), icon: "\u{1f680}".into(), description: "推送并发布到测试环境".into(), color: "cyan".into() },
-        QuickAction { label: "提交代码".into(), command: "帮我提交".into(), icon: "\u{1f4dd}".into(), description: "AI 分析变更并生成 commit".into(), color: "green".into() },
-        QuickAction { label: "创建分支".into(), command: "/branch".into(), icon: "\u{1f33f}".into(), description: "新建 Git 分支".into(), color: "purple".into() },
-        QuickAction { label: "创建 PR".into(), command: "/create-pr".into(), icon: "\u{1f4ec}".into(), description: "质量检查后创建合并请求".into(), color: "blue".into() },
+        QuickAction {
+            label: "录入 Bug".into(),
+            command: "/xy-bug-track".into(),
+            icon: "\u{1f41b}".into(),
+            description: "录入 bug 反馈".into(),
+            color: "red".into(),
+        },
+        QuickAction {
+            label: "修 Bug".into(),
+            command: "/xy-bug-fix".into(),
+            icon: "\u{1f527}".into(),
+            description: "从 bug 列表选择并修复".into(),
+            color: "orange".into(),
+        },
+        QuickAction {
+            label: "发布测试服".into(),
+            command: "发布测试服".into(),
+            icon: "\u{1f680}".into(),
+            description: "推送并发布到测试环境".into(),
+            color: "cyan".into(),
+        },
+        QuickAction {
+            label: "提交代码".into(),
+            command: "帮我提交".into(),
+            icon: "\u{1f4dd}".into(),
+            description: "AI 分析变更并生成 commit".into(),
+            color: "green".into(),
+        },
+        QuickAction {
+            label: "创建分支".into(),
+            command: "/branch".into(),
+            icon: "\u{1f33f}".into(),
+            description: "新建 Git 分支".into(),
+            color: "purple".into(),
+        },
+        QuickAction {
+            label: "创建 PR".into(),
+            command: "/create-pr".into(),
+            icon: "\u{1f4ec}".into(),
+            description: "质量检查后创建合并请求".into(),
+            color: "blue".into(),
+        },
     ]
 }
 
@@ -1772,10 +2651,10 @@ fn load_quick_actions(working_dir: String) -> Result<Vec<QuickAction>, String> {
         return Ok(default_quick_actions());
     }
 
-    let content = std::fs::read_to_string(&config_path)
-        .map_err(|e| format!("读取配置失败: {}", e))?;
-    let config: QuickActionsConfig = serde_json::from_str(&content)
-        .map_err(|e| format!("解析配置失败: {}", e))?;
+    let content =
+        std::fs::read_to_string(&config_path).map_err(|e| format!("读取配置失败: {}", e))?;
+    let config: QuickActionsConfig =
+        serde_json::from_str(&content).map_err(|e| format!("解析配置失败: {}", e))?;
 
     Ok(config.actions)
 }
@@ -1797,8 +2676,7 @@ fn reveal_quick_actions_config(working_dir: String) -> Result<(), String> {
         };
         let json = serde_json::to_string_pretty(&default_config)
             .map_err(|e| format!("序列化失败: {}", e))?;
-        std::fs::write(&config_path, json)
-            .map_err(|e| format!("写入配置失败: {}", e))?;
+        std::fs::write(&config_path, json).map_err(|e| format!("写入配置失败: {}", e))?;
     }
 
     // 用 Finder 打开文件
@@ -1889,6 +2767,9 @@ pub fn run() {
             if let Err(error) = migrate_app_data_dir() {
                 eprintln!("迁移 Coding Desktop 本地数据失败: {}", error);
             }
+            if let Err(error) = ensure_skill_management_files() {
+                eprintln!("初始化 Skill 管理文件失败: {}", error);
+            }
             Ok(())
         })
         .manage(AppState {
@@ -1912,6 +2793,8 @@ pub fn run() {
             list_directory,
             list_rule_files,
             list_skills,
+            toggle_installed_skill,
+            sync_skill_enabled_fields,
             get_disabled_skills,
             toggle_skill_for_project,
             get_global_disabled_skills,

@@ -176,9 +176,7 @@ pub fn send_chat_message(
                     if trimmed.is_empty() {
                         continue;
                     }
-                    if let Ok(json) =
-                        serde_json::from_str::<serde_json::Value>(trimmed)
-                    {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(trimmed) {
                         let _ = app_clone.emit(
                             "chat-stream",
                             serde_json::json!({
@@ -201,10 +199,7 @@ pub fn send_chat_message(
                 }
             }
         }
-        let _ = app_clone.emit(
-            "chat-done",
-            serde_json::json!({ "chatId": chat_id_clone }),
-        );
+        let _ = app_clone.emit("chat-done", serde_json::json!({ "chatId": chat_id_clone }));
     });
 
     Ok(ChatProcess {

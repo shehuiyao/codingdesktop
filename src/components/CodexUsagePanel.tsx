@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 type ViewMode = "day" | "week" | "month";
@@ -43,8 +43,11 @@ interface ActivityDay {
   date: string;
   month: string;
   turns: number;
+  input: number;
+  cached: number;
   total: number;
   output: number;
+  reasoning: number;
   level: number;
 }
 
@@ -133,6 +136,10 @@ function formatActivityDate(value: string) {
   return parseDate(value).toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
 }
 
+function formatActivityDateTitle(value: string) {
+  return parseDate(value).toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" });
+}
+
 function formatSourceLabel(path: string) {
   const normalized = path.replace(/\\/g, "/");
   const area = normalized.includes("/tmp/codex-subscription-home/.codex") ? "订阅隔离" : normalized.includes("/.codex/") ? "主目录" : "本地目录";
@@ -211,8 +218,11 @@ function buildActivityDays(selectedDate: string, usage: CodexUsageItem[], weeks 
       date: key,
       month: date.toLocaleDateString("zh-CN", { month: "short" }),
       turns: bucket.turns,
+      input: bucket.input,
+      cached: bucket.cached,
       total: bucket.total,
       output: bucket.output,
+      reasoning: bucket.reasoning,
       level,
     });
   }
@@ -273,7 +283,7 @@ function UsageChart({ points }: { points: Bucket[] }) {
           <line x1={hoverX} y1="34" x2={hoverX} y2="252" stroke="var(--border-color)" strokeDasharray="4 4" />
         )}
         <path d={makeLinePath(points, "total", width, height, 252)} fill="none" stroke="var(--accent-cyan)" strokeWidth="3" />
-        <path d={makeLinePath(points, "output", width, height, 252)} fill="none" stroke="var(--accent-orange)" strokeWidth="2" />
+        <path d={makeLinePath(points, "output", width, height, 252)} fill="none" stroke="var(--accent-orange)" strokeWidth="2.5" strokeDasharray="7 5" />
         {points.map((point, index) => {
           const x = 42 + index * step;
           const y = 252 - (point.total / max) * height;
@@ -293,8 +303,8 @@ function UsageChart({ points }: { points: Bucket[] }) {
         <ChartTooltip x={hoverX} y={Math.max(52, hoverY)}>
           <div className="mb-1 font-medium text-[var(--text-primary)]">{hoverPoint.label}</div>
           <div className="grid grid-cols-[auto_auto] gap-x-4 gap-y-1">
-            <span>总量</span><span className="text-right text-[var(--text-primary)] tabular-nums">{formatTokens(hoverPoint.total)}</span>
-            <span>输出</span><span className="text-right text-[var(--text-primary)] tabular-nums">{formatTokens(hoverPoint.output)}</span>
+            <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[var(--accent-cyan)]" />总量</span><span className="text-right text-[var(--text-primary)] tabular-nums">{formatTokens(hoverPoint.total)}</span>
+            <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[var(--accent-orange)]" />输出</span><span className="text-right text-[var(--text-primary)] tabular-nums">{formatTokens(hoverPoint.output)}</span>
             <span>缓存</span><span className="text-right text-[var(--text-primary)] tabular-nums">{formatTokens(hoverPoint.cached)}</span>
             <span>请求</span><span className="text-right text-[var(--text-primary)] tabular-nums">{hoverPoint.turns}</span>
           </div>
@@ -357,6 +367,8 @@ function SpeedChart({ points }: { points: Bucket[] }) {
 }
 
 function ActivityHeatmap({ days }: { days: ActivityDay[] }) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [hoveredDay, setHoveredDay] = useState<{ day: ActivityDay; x: number; y: number } | null>(null);
   const weeks = Math.ceil(days.length / 7);
   const monthLabels = days.reduce<{ month: string; column: number }[]>((labels, day, index) => {
     const column = Math.floor(index / 7);
@@ -370,8 +382,21 @@ function ActivityHeatmap({ days }: { days: ActivityDay[] }) {
   const totalTurns = days.reduce((sum, day) => sum + day.turns, 0);
   const activeDays = days.filter((day) => day.turns > 0).length;
 
+  const updateHoveredDay = (event: MouseEvent<HTMLDivElement>, day: ActivityDay) => {
+    const rect = cardRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const horizontalPadding = Math.min(120, rect.width / 2);
+    const x = Math.min(Math.max(event.clientX - rect.left, horizontalPadding), rect.width - horizontalPadding);
+    const y = Math.max(event.clientY - rect.top, 96);
+    setHoveredDay({ day, x, y });
+  };
+
   return (
-    <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)]/92 p-4 min-w-0">
+    <div
+      ref={cardRef}
+      className="relative rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)]/92 p-4 min-w-0"
+      onMouseLeave={() => setHoveredDay(null)}
+    >
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-medium text-[var(--text-primary)]">活跃度</h2>
@@ -412,12 +437,42 @@ function ActivityHeatmap({ days }: { days: ActivityDay[] }) {
                           ? "bg-[var(--activity-level-3)]"
                           : "bg-[var(--activity-level-4)]"
                 }`}
-                title={`${formatActivityDate(day.date)}\n请求 ${day.turns} 次\n总量 ${formatTokens(day.total)}\n输出 ${formatTokens(day.output)}`}
+                aria-label={`${formatActivityDate(day.date)}，请求 ${day.turns} 次，总量 ${formatTokens(day.total)}，输出 ${formatTokens(day.output)}`}
+                onMouseEnter={(event) => updateHoveredDay(event, day)}
+                onMouseMove={(event) => updateHoveredDay(event, day)}
+                onMouseLeave={() => setHoveredDay(null)}
               />
             ))}
           </div>
         </div>
       </div>
+
+      {hoveredDay && (
+        <div
+          className="pointer-events-none absolute z-20 min-w-[210px] rounded-xl border border-[var(--border-color)] bg-[var(--bg-primary)] px-3 py-2 text-xs text-[var(--text-secondary)] shadow-[0_16px_38px_var(--shadow-color)]"
+          style={{
+            left: hoveredDay.x,
+            top: hoveredDay.y,
+            transform: "translate(-50%, calc(-100% - 12px))",
+          }}
+        >
+          <div className="mb-1 font-medium text-[var(--text-primary)]">{formatActivityDateTitle(hoveredDay.day.date)}</div>
+          <div className="grid grid-cols-[auto_auto] gap-x-4 gap-y-1">
+            <span>请求</span>
+            <span className="text-right text-[var(--text-primary)] tabular-nums">{hoveredDay.day.turns} 次</span>
+            <span>总量</span>
+            <span className="text-right text-[var(--text-primary)] tabular-nums">{formatTokens(hoveredDay.day.total)}</span>
+            <span>输入</span>
+            <span className="text-right text-[var(--text-primary)] tabular-nums">{formatTokens(hoveredDay.day.input)}</span>
+            <span>缓存</span>
+            <span className="text-right text-[var(--text-primary)] tabular-nums">{formatTokens(hoveredDay.day.cached)}</span>
+            <span>输出</span>
+            <span className="text-right text-[var(--text-primary)] tabular-nums">{formatTokens(hoveredDay.day.output)}</span>
+            <span>推理</span>
+            <span className="text-right text-[var(--text-primary)] tabular-nums">{formatTokens(hoveredDay.day.reasoning)}</span>
+          </div>
+        </div>
+      )}
 
       <div className="mt-4 flex items-center justify-center gap-2 text-xs text-[var(--text-muted)]">
         <span>Less</span>
@@ -584,8 +639,8 @@ export default function CodexUsagePanel() {
 
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
           {[
-            ["总量", formatTokens(totals.total), `${dateKey(start)} ~ ${dateKey(end)}`],
-            ["非缓存粗略量", formatTokens(Math.max(totals.total - totals.cached, 0)), "总量减缓存输入"],
+            ["总 token", formatTokens(totals.total), "含缓存输入，数值会偏大"],
+            ["实际消耗估算", formatTokens(Math.max(totals.total - totals.cached, 0)), "总量扣掉缓存输入"],
             ["输出", formatTokens(totals.output), "回答与工具输出相关"],
             ["请求次数", new Intl.NumberFormat("zh-CN").format(totals.turns), "token_count 事件数"],
             ["平均耗时", formatSeconds(avgDuration), `${durations.length} 轮可计算`],
@@ -606,7 +661,16 @@ export default function CodexUsagePanel() {
           <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)]/92 p-4 min-w-0">
             <div className="flex items-center justify-between gap-3 mb-3">
               <h2 className="text-sm font-medium text-[var(--text-primary)]">用量折线</h2>
-              <span className="text-[11px] text-[var(--text-muted)]">总量 / 输出</span>
+              <div className="flex shrink-0 items-center gap-3 text-[11px] text-[var(--text-secondary)]">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-2 w-5 rounded-full bg-[var(--accent-cyan)]" />
+                  总量
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-0 w-5 border-t-2 border-dashed border-[var(--accent-orange)]" />
+                  输出
+                </span>
+              </div>
             </div>
             <UsageChart points={buckets} />
           </div>

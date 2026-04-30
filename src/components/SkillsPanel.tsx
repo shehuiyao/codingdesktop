@@ -1,12 +1,18 @@
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 interface SkillInfo {
+  id: string;
   name: string;
   source: string;
   description: string;
   category: string;
   path: string;
+  enabled: boolean;
+  can_toggle: boolean;
+  usage_count: number;
+  first_used_at?: string | null;
+  last_used_at?: string | null;
 }
 
 interface SkillsPanelProps {
@@ -14,25 +20,51 @@ interface SkillsPanelProps {
   workingDir?: string | null;
 }
 
+type SortMode = "usage" | "name" | "recent";
+type FilterMode = "all" | "enabled" | "disabled" | "unused";
+
 const CATEGORIES = [
-  { key: "official", label: "官方", color: "var(--accent-blue, #60a5fa)" },
+  { key: "official", label: "官方", color: "var(--accent-blue, #58a6ff)" },
   { key: "senguo", label: "森果", color: "var(--accent-orange, #f59e0b)" },
   { key: "personal", label: "自定义", color: "var(--accent-green)" },
 ] as const;
 
-/** 小型 toggle 开关 */
+const SOURCE_LABELS: Record<string, string> = {
+  codex: "Codex",
+  agents: "Agents",
+  claude: "Claude",
+  system: "系统",
+  plugin: "插件",
+};
+
+function formatCount(value: number) {
+  if (value >= 10_000) return `${(value / 10_000).toFixed(1)} 万`;
+  return new Intl.NumberFormat("zh-CN").format(value);
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "从未使用";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "时间未知";
+  return date.toLocaleString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function sourceLabel(source: string) {
+  return SOURCE_LABELS[source] ?? source;
+}
+
+function categoryMeta(category: string) {
+  return CATEGORIES.find((item) => item.key === category) ?? CATEGORIES[2];
+}
+
 function MiniToggle({
   on,
-  color,
   disabled,
-  label,
   title,
   onClick,
 }: {
   on: boolean;
-  color: string;
   disabled?: boolean;
-  label: string;
   title: string;
   onClick: () => void;
 }) {
@@ -40,296 +72,468 @@ function MiniToggle({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`shrink-0 flex items-center gap-0.5 ${disabled ? "opacity-30 cursor-not-allowed" : "cursor-pointer"}`}
+      className={`relative h-5 w-9 shrink-0 rounded-full border transition-all ${
+        disabled
+          ? "cursor-not-allowed border-[var(--border-subtle)] bg-[var(--bg-tertiary)] opacity-40"
+          : on
+            ? "cursor-pointer border-[var(--accent-cyan)] bg-[var(--accent-cyan)]"
+            : "cursor-pointer border-[var(--border-color)] bg-[var(--bg-hover)]"
+      }`}
       title={title}
     >
-      <span className="text-[9px] text-[var(--text-muted)] select-none">{label}</span>
-      <div
-        className="relative w-6 h-3.5 rounded-full transition-colors duration-200"
-        style={{
-          backgroundColor: on && !disabled ? color : "var(--bg-hover, #3f3f46)",
-        }}
-      >
-        <div
-          className="absolute top-[2px] w-2.5 h-2.5 rounded-full bg-white shadow-sm transition-transform duration-200"
-          style={{
-            transform: on && !disabled ? "translateX(11px)" : "translateX(2px)",
-          }}
-        />
-      </div>
+      <span
+        className="absolute top-[3px] h-3 w-3 rounded-full bg-white shadow-sm transition-transform"
+        style={{ transform: on ? "translateX(19px)" : "translateX(3px)" }}
+      />
     </button>
   );
+}
+
+function StatCard({ label, value, sub }: { label: string; value: string; sub: string }) {
+  return (
+    <div className="min-w-0 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)]/92 p-3">
+      <div className="text-[11px] text-[var(--text-muted)]">{label}</div>
+      <div className="mt-1 truncate text-lg font-semibold text-[var(--text-primary)]">{value}</div>
+      <div className="mt-1 truncate text-[10px] text-[var(--text-muted)]">{sub}</div>
+    </div>
+  );
+}
+
+function UsageBars({ skills }: { skills: SkillInfo[] }) {
+  const rows = skills.filter((skill) => skill.usage_count > 0).slice(0, 8);
+  const max = Math.max(...rows.map((skill) => skill.usage_count), 1);
+
+  return (
+    <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)]/92 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-medium text-[var(--text-primary)]">使用排行</h2>
+        <span className="text-[11px] text-[var(--text-muted)]">Top 8</span>
+      </div>
+      {rows.length === 0 ? (
+        <div className="py-8 text-center text-xs text-[var(--text-muted)]">还没有使用记录</div>
+      ) : (
+        <div className="space-y-3">
+          {rows.map((skill) => {
+            const meta = categoryMeta(skill.category);
+            return (
+              <div key={skill.id} className="grid grid-cols-[minmax(90px,1fr)_minmax(110px,1.4fr)_auto] items-center gap-3 text-xs">
+                <div className="truncate text-[var(--text-secondary)]" title={skill.name}>{skill.name}</div>
+                <div className="h-2 overflow-hidden rounded-full bg-[var(--bg-tertiary)]">
+                  <div
+                    className="h-full rounded-full"
+                    style={{ width: `${Math.max(4, (skill.usage_count / max) * 100)}%`, backgroundColor: meta.color }}
+                  />
+                </div>
+                <div className="tabular-nums text-[var(--text-primary)]">{formatCount(skill.usage_count)}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StateDonut({ enabled, disabled }: { enabled: number; disabled: number }) {
+  const total = Math.max(enabled + disabled, 1);
+  const enabledPercent = Math.round((enabled / total) * 100);
+
+  return (
+    <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)]/92 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-medium text-[var(--text-primary)]">启用状态</h2>
+        <span className="text-[11px] text-[var(--text-muted)]">{enabledPercent}% 开启</span>
+      </div>
+      <div className="flex items-center gap-4">
+        <div
+          className="grid h-24 w-24 shrink-0 place-items-center rounded-full"
+          style={{
+            background: `conic-gradient(var(--accent-cyan) 0 ${enabledPercent}%, var(--accent-red) ${enabledPercent}% 100%)`,
+          }}
+        >
+          <div className="grid h-[68px] w-[68px] place-items-center rounded-full bg-[var(--bg-secondary)] text-sm font-semibold text-[var(--text-primary)]">
+            {enabledPercent}%
+          </div>
+        </div>
+        <div className="min-w-0 flex-1 space-y-2 text-xs">
+          <div className="flex items-center justify-between gap-3">
+            <span className="flex items-center gap-2 text-[var(--text-secondary)]"><span className="h-2 w-2 rounded-full bg-[var(--accent-cyan)]" />已开启</span>
+            <span className="tabular-nums text-[var(--text-primary)]">{enabled}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="flex items-center gap-2 text-[var(--text-secondary)]"><span className="h-2 w-2 rounded-full bg-[var(--accent-red)]" />已隐藏</span>
+            <span className="tabular-nums text-[var(--text-primary)]">{disabled}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CategoryBars({ skills }: { skills: SkillInfo[] }) {
+  const rows = CATEGORIES.map((category) => ({
+    ...category,
+    count: skills.filter((skill) => skill.category === category.key).length,
+  }));
+  const max = Math.max(...rows.map((row) => row.count), 1);
+
+  return (
+    <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)]/92 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-medium text-[var(--text-primary)]">技能分布</h2>
+        <span className="text-[11px] text-[var(--text-muted)]">按来源语义</span>
+      </div>
+      <div className="space-y-3">
+        {rows.map((row) => (
+          <div key={row.key} className="grid grid-cols-[52px_1fr_auto] items-center gap-3 text-xs">
+            <span className="text-[var(--text-secondary)]">{row.label}</span>
+            <div className="h-2 overflow-hidden rounded-full bg-[var(--bg-tertiary)]">
+              <div className="h-full rounded-full" style={{ width: `${(row.count / max) * 100}%`, backgroundColor: row.color }} />
+            </div>
+            <span className="tabular-nums text-[var(--text-primary)]">{row.count}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function uniqueByName(skills: SkillInfo[]) {
+  const map = new Map<string, SkillInfo>();
+  skills.forEach((skill) => {
+    const current = map.get(skill.name);
+    if (!current) {
+      map.set(skill.name, skill);
+      return;
+    }
+    const currentTime = new Date(current.last_used_at || 0).getTime();
+    const nextTime = new Date(skill.last_used_at || 0).getTime();
+    if (skill.usage_count > current.usage_count || nextTime > currentTime) {
+      map.set(skill.name, skill);
+    }
+  });
+  return Array.from(map.values());
 }
 
 export default function SkillsPanel({ onClose, workingDir }: SkillsPanelProps) {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [disabledSkills, setDisabledSkills] = useState<Set<string>>(new Set());
-  const [globalDisabledSkills, setGlobalDisabledSkills] = useState<Set<string>>(new Set());
-  const [usageCounts, setUsageCounts] = useState<Record<string, number>>({});
-  const [scope, setScope] = useState<"global" | "project">(workingDir ? "project" : "global");
+  const [projectDisabledSkills, setProjectDisabledSkills] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<FilterMode>("all");
+  const [sort, setSort] = useState<SortMode>("usage");
 
-  // 加载项目级禁用列表
-  const loadDisabled = useCallback(() => {
+  const loadSkills = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const next = await invoke<SkillInfo[]>("list_skills");
+      setSkills(next);
+    } catch (err) {
+      setError(String(err));
+      setSkills([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadProjectDisabled = useCallback(() => {
     if (!workingDir) return;
     invoke<string[]>("get_disabled_skills", { projectPath: workingDir })
-      .then((list) => setDisabledSkills(new Set(list)))
+      .then((list) => setProjectDisabledSkills(new Set(list)))
       .catch(() => {});
   }, [workingDir]);
 
-  // 加载全局禁用列表
-  const loadGlobalDisabled = useCallback(() => {
-    invoke<string[]>("get_global_disabled_skills")
-      .then((list) => setGlobalDisabledSkills(new Set(list)))
-      .catch(() => {});
-  }, []);
+  useEffect(() => {
+    loadSkills();
+  }, [loadSkills]);
 
   useEffect(() => {
-    invoke<SkillInfo[]>("list_skills")
-      .then(setSkills)
-      .catch(() => setSkills([]))
-      .finally(() => setLoading(false));
-    invoke<Record<string, number>>("get_skill_usage")
-      .then(setUsageCounts)
-      .catch(() => {});
-    loadGlobalDisabled();
-  }, [loadGlobalDisabled]);
+    loadProjectDisabled();
+  }, [loadProjectDisabled]);
 
-  useEffect(() => {
-    loadDisabled();
-  }, [loadDisabled]);
+  const chartSkills = useMemo(() => uniqueByName(skills), [skills]);
 
-  const toggleExpand = (name: string) => {
+  const stats = useMemo(() => {
+    const enabled = skills.filter((skill) => skill.enabled).length;
+    const used = chartSkills.filter((skill) => skill.usage_count > 0).length;
+    const totalUsage = chartSkills.reduce((sum, skill) => sum + skill.usage_count, 0);
+    const recent = chartSkills
+      .filter((skill) => skill.last_used_at)
+      .sort((a, b) => new Date(b.last_used_at || 0).getTime() - new Date(a.last_used_at || 0).getTime())[0];
+    return {
+      total: skills.length,
+      enabled,
+      disabled: skills.length - enabled,
+      used,
+      unused: chartSkills.length - used,
+      totalUsage,
+      recent,
+    };
+  }, [chartSkills, skills]);
+
+  const filteredSkills = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    const next = skills.filter((skill) => {
+      if (filter === "enabled" && !skill.enabled) return false;
+      if (filter === "disabled" && skill.enabled) return false;
+      if (filter === "unused" && skill.usage_count > 0) return false;
+      if (!keyword) return true;
+      return [skill.name, skill.description, skill.source, skill.category].some((value) => value.toLowerCase().includes(keyword));
+    });
+
+    return next.sort((a, b) => {
+      if (sort === "name") return a.name.localeCompare(b.name);
+      if (sort === "recent") return new Date(b.last_used_at || 0).getTime() - new Date(a.last_used_at || 0).getTime();
+      return b.usage_count - a.usage_count || a.name.localeCompare(b.name);
+    });
+  }, [filter, query, skills, sort]);
+
+  const toggleExpand = (id: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
 
-  // 项目级开关
-  const toggleSkill = async (skillName: string, currentlyEnabled: boolean) => {
+  const toggleGlobalSkill = async (skill: SkillInfo) => {
+    if (!skill.can_toggle) return;
+    try {
+      await invoke("toggle_installed_skill", {
+        skillPath: skill.path,
+        enabled: !skill.enabled,
+      });
+      await loadSkills();
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
+  const toggleProjectSkill = async (skill: SkillInfo) => {
     if (!workingDir) return;
+    const projectEnabled = !projectDisabledSkills.has(skill.name);
     try {
       await invoke("toggle_skill_for_project", {
         projectPath: workingDir,
-        skillName,
-        enabled: !currentlyEnabled,
+        skillName: skill.name,
+        enabled: !projectEnabled,
       });
-      loadDisabled();
-    } catch {
-      // 静默失败
+      loadProjectDisabled();
+    } catch (err) {
+      setError(String(err));
     }
   };
 
-  // 全局开关
-  const toggleGlobalSkill = async (skillName: string, currentlyEnabled: boolean) => {
+  const syncEnabledFields = async () => {
+    setSyncing(true);
+    setError("");
     try {
-      await invoke("toggle_global_skill", {
-        skillName,
-        enabled: !currentlyEnabled,
-      });
-      loadGlobalDisabled();
-    } catch {
-      // 静默失败
+      await invoke<number>("sync_skill_enabled_fields");
+      await loadSkills();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setSyncing(false);
     }
   };
 
-  const grouped = CATEGORIES.map((cat) => ({
-    ...cat,
-    skills: skills.filter((s) => s.category === cat.key),
-  }));
+  const openPath = (path: string) => {
+    invoke("reveal_in_finder", { path }).catch(() => {});
+  };
 
   return (
-    <div className="absolute inset-0 z-10 flex flex-col bg-[var(--bg-primary)]">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]">
-        <span className="text-xs text-[var(--text-muted)]">
-          Skills
-          {skills.length > 0 && (
-            <span className="ml-1.5">({skills.length})</span>
-          )}
-        </span>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => {
-              setLoading(true);
-              invoke<SkillInfo[]>("list_skills")
-                .then(setSkills)
-                .catch(() => setSkills([]))
-                .finally(() => setLoading(false));
-            }}
-            className="w-6 h-6 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors duration-150"
-            title="刷新技能列表"
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M1 1v5h5M15 15v-5h-5" />
-              <path d="M13.5 6A6 6 0 0 0 3.2 3.2L1 6M2.5 10a6 6 0 0 0 10.3 2.8L15 10" />
-            </svg>
-          </button>
-          <button
-            onClick={onClose}
-            className="w-6 h-6 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors duration-150 text-xs"
-          >
-            ✕
-          </button>
-        </div>
-      </div>
-
-      {/* Scope 切换 */}
-      <div className="flex items-center px-4 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]">
-        <div className="flex rounded-md overflow-hidden border border-[var(--border-subtle)]">
-          <button
-            className={`px-3 py-0.5 text-[10px] transition-colors duration-150 cursor-pointer ${
-              scope === "global"
-                ? "bg-[var(--bg-hover,#3f3f46)] text-[var(--text-primary)]"
-                : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
-            }`}
-            onClick={() => setScope("global")}
-          >
-            全局
-          </button>
-          {workingDir && (
+    <div className="absolute inset-0 z-10 flex flex-col bg-[radial-gradient(circle_at_top_left,rgba(188,140,255,0.09),transparent_30%),var(--bg-primary)]">
+      <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]/95 px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="truncate text-sm font-semibold text-[var(--text-primary)]">Skills 使用看板</h1>
+            <div className="mt-1 truncate text-[11px] text-[var(--text-muted)]">
+              本地账本：~/.codex/skill-usage.json
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
             <button
-              className={`px-3 py-0.5 text-[10px] transition-colors duration-150 cursor-pointer border-l border-[var(--border-subtle)] ${
-                scope === "project"
-                  ? "bg-[var(--bg-hover,#3f3f46)] text-[var(--text-primary)]"
-                  : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
-              }`}
-              onClick={() => setScope("project")}
+              onClick={syncEnabledFields}
+              disabled={syncing}
+              className="h-7 rounded-xl border border-[var(--border-color)] bg-[var(--bg-tertiary)] px-3 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-default disabled:opacity-50"
+              title="把当前目录状态同步写入 enabled: true/false"
             >
-              项目
+              {syncing ? "同步中" : "同步"}
             </button>
-          )}
+            <button
+              onClick={loadSkills}
+              disabled={loading}
+              className="grid h-7 w-7 place-items-center rounded-xl border border-[var(--border-color)] bg-[var(--bg-tertiary)] text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50"
+              title="刷新"
+            >
+              ↻
+            </button>
+            <button
+              onClick={onClose}
+              className="grid h-7 w-7 place-items-center rounded-xl border border-[var(--border-color)] bg-[var(--bg-tertiary)] text-xs text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-y-auto p-4">
-        {loading && (
-          <div className="text-xs text-[var(--text-secondary)] text-center py-8">加载中...</div>
-        )}
-
-        {!loading && skills.length === 0 && (
-          <div className="text-xs text-[var(--text-secondary)] text-center py-8">
-            暂无已安装技能
+        {error && (
+          <div className="mb-3 rounded-xl border border-[var(--accent-red)]/35 bg-[var(--accent-red)]/10 px-3 py-2 text-xs text-[var(--accent-red)]">
+            {error}
           </div>
         )}
 
-        {!loading &&
-          grouped.map(
-            (group) =>
-              group.skills.length > 0 && (
-                <div key={group.key} className="mb-5">
-                  <div className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] mb-2 px-1 flex items-center gap-2">
-                    <span
-                      className="w-1.5 h-1.5 rounded-full shrink-0"
-                      style={{ backgroundColor: group.color }}
-                    />
-                    {group.label}
-                    <span className="text-[var(--text-muted)]">({group.skills.length})</span>
+        <div className="mb-3 grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <StatCard label="技能总数" value={formatCount(stats.total)} sub={`${chartSkills.length} 个唯一名称`} />
+          <StatCard label="使用次数" value={formatCount(stats.totalUsage)} sub={`${stats.used} 个技能有记录`} />
+          <StatCard label="闲置技能" value={formatCount(stats.unused)} sub="可考虑先隐藏观察" />
+          <StatCard label="最近使用" value={stats.recent?.name ?? "-"} sub={formatDate(stats.recent?.last_used_at)} />
+        </div>
+
+        <div className="mb-3 grid grid-cols-1 gap-3 2xl:grid-cols-[1.25fr_0.8fr_0.8fr]">
+          <UsageBars skills={chartSkills} />
+          <StateDonut enabled={stats.enabled} disabled={stats.disabled} />
+          <CategoryBars skills={chartSkills} />
+        </div>
+
+        <div className="sticky top-0 z-20 mb-3 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-primary)]/88 p-3 backdrop-blur">
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索技能、描述、来源"
+              className="h-8 min-w-[180px] flex-1 rounded-xl border border-[var(--border-color)] bg-[var(--bg-secondary)] px-3 text-xs text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+            />
+            <div className="inline-flex overflow-hidden rounded-xl border border-[var(--border-color)] bg-[var(--bg-secondary)]">
+              {([
+                ["all", "全部"],
+                ["enabled", "开启"],
+                ["disabled", "隐藏"],
+                ["unused", "闲置"],
+              ] as [FilterMode, string][]).map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => setFilter(value)}
+                  className={`h-8 px-3 text-xs transition-colors ${
+                    filter === value ? "bg-[var(--accent-purple)] text-[#0d1117]" : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="relative">
+              <select
+                value={sort}
+                onChange={(event) => setSort(event.target.value as SortMode)}
+                className="h-8 appearance-none rounded-xl border border-[var(--border-color)] bg-[var(--bg-secondary)] pl-3 pr-8 text-xs text-[var(--text-primary)] outline-none"
+              >
+                <option value="usage" className="bg-[var(--bg-primary)]">按使用次数</option>
+                <option value="recent" className="bg-[var(--bg-primary)]">按最近使用</option>
+                <option value="name" className="bg-[var(--bg-primary)]">按名称</option>
+              </select>
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-[var(--text-muted)]">▼</span>
+            </div>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)]/92 py-10 text-center text-sm text-[var(--text-muted)]">
+            正在扫描技能目录...
+          </div>
+        ) : filteredSkills.length === 0 ? (
+          <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)]/92 py-10 text-center text-sm text-[var(--text-muted)]">
+            没有符合条件的技能
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {filteredSkills.map((skill) => {
+              const meta = categoryMeta(skill.category);
+              const isOpen = expanded.has(skill.id);
+              const projectEnabled = !projectDisabledSkills.has(skill.name);
+              return (
+                <div
+                  key={skill.id}
+                  className="overflow-hidden rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)]/92"
+                >
+                  <div className="grid grid-cols-[1fr_auto] gap-3 px-4 py-3">
                     <button
-                      className="ml-auto shrink-0 w-5 h-5 flex items-center justify-center rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors duration-150"
-                      title="在访达中打开"
-                      onClick={() => {
-                        const first = group.skills[0];
-                        if (first?.path) {
-                          invoke("reveal_in_finder", { path: first.path });
-                        }
-                      }}
+                      onClick={() => toggleExpand(skill.id)}
+                      className="min-w-0 cursor-pointer text-left"
+                      title={skill.description || skill.name}
                     >
-                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M2 4h12M2 4v9a1 1 0 001 1h10a1 1 0 001-1V4M2 4l1.5-2h9L14 4" />
-                      </svg>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: meta.color, opacity: skill.enabled ? 1 : 0.35 }} />
+                        <span className={`truncate text-sm font-medium ${skill.enabled ? "text-[var(--text-primary)]" : "text-[var(--text-muted)] line-through"}`}>
+                          {skill.name}
+                        </span>
+                        <span className="shrink-0 rounded-full border border-[var(--border-color)] bg-[var(--bg-tertiary)] px-2 py-0.5 text-[10px] text-[var(--text-muted)]">
+                          {sourceLabel(skill.source)}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--text-muted)]">
+                        <span>{formatCount(skill.usage_count)} 次使用</span>
+                        <span>最近：{formatDate(skill.last_used_at)}</span>
+                        {!skill.can_toggle && <span>只读</span>}
+                      </div>
                     </button>
-                  </div>
-                  <div className="grid gap-1.5">
-                    {group.skills.map((skill) => {
-                      const isOpen = expanded.has(skill.name);
-                      const globalEnabled = !globalDisabledSkills.has(skill.name);
-                      const projectEnabled = !disabledSkills.has(skill.name);
-                      const isEnabled = scope === "global" ? globalEnabled : globalEnabled && projectEnabled;
-                      const count = usageCounts[skill.name] || 0;
-                      return (
-                        <div
-                          key={skill.name}
-                          className="rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-subtle)] overflow-hidden"
-                        >
-                          <div className="flex items-center gap-2 px-3 py-2">
-                            <span
-                              className="w-2 h-2 rounded-full shrink-0"
-                              style={{
-                                backgroundColor: group.color,
-                                opacity: isEnabled ? 1 : 0.3,
-                              }}
-                            />
-                            <span
-                              className={`text-xs flex-1 truncate cursor-pointer hover:underline ${
-                                isEnabled
-                                  ? "text-[var(--text-primary)]"
-                                  : "text-[var(--text-muted)] line-through"
-                              }`}
-                              onClick={() => skill.description && toggleExpand(skill.name)}
-                            >
-                              {skill.name}
-                            </span>
-                            {count > 0 && (
-                              <span className="text-[10px] text-[var(--text-muted)] shrink-0" title="使用次数">
-                                {count}次
-                              </span>
-                            )}
-                            {scope === "global" ? (
-                              <MiniToggle
-                                on={globalEnabled}
-                                color={group.color}
-                                label=""
-                                title={globalEnabled ? "全局禁用此技能" : "全局启用此技能"}
-                                onClick={() => toggleGlobalSkill(skill.name, globalEnabled)}
-                              />
-                            ) : (
-                              <MiniToggle
-                                on={projectEnabled}
-                                color={group.color}
-                                disabled={!globalEnabled}
-                                label=""
-                                title={
-                                  !globalEnabled
-                                    ? "全局已禁用，请先全局启用"
-                                    : projectEnabled
-                                      ? "在此项目中禁用"
-                                      : "在此项目中启用"
-                                }
-                                onClick={() => toggleSkill(skill.name, projectEnabled)}
-                              />
-                            )}
-                          </div>
-                          {isOpen && skill.description && (
-                            <div className="px-3 pb-2.5 pt-0">
-                              <div className="text-[11px] leading-relaxed text-[var(--text-secondary)] pl-5 border-l-2 border-[var(--border-subtle)] ml-[3px]">
-                                {skill.description}
-                              </div>
-                              {skill.path && (
-                                <button
-                                  onClick={() => invoke("reveal_in_finder", { path: skill.path })}
-                                  className="mt-1.5 ml-5 text-[10px] text-[var(--text-muted)] hover:text-[var(--accent-cyan)] cursor-pointer transition-colors duration-150 flex items-center gap-1"
-                                >
-                                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M2 4h12M2 4v9a1 1 0 001 1h10a1 1 0 001-1V4M2 4l1.5-2h9L14 4" />
-                                  </svg>
-                                  在访达中打开
-                                </button>
-                              )}
-                            </div>
-                          )}
+
+                    <div className="flex shrink-0 items-center gap-3">
+                      {workingDir && (
+                        <div className="flex items-center gap-1.5" title={!skill.enabled ? "全局隐藏后，项目开关不会生效" : "项目级开关写入 .claude/settings.local.json"}>
+                          <span className="text-[10px] text-[var(--text-muted)]">项目</span>
+                          <MiniToggle
+                            on={projectEnabled && skill.enabled}
+                            disabled={!skill.enabled}
+                            title={projectEnabled ? "在当前项目禁用" : "在当前项目启用"}
+                            onClick={() => toggleProjectSkill(skill)}
+                          />
                         </div>
-                      );
-                    })}
+                      )}
+                      <div className="flex items-center gap-1.5" title={skill.can_toggle ? "移动 skill 目录并写入 enabled 字段" : "插件技能暂不支持移动隐藏"}>
+                        <span className="text-[10px] text-[var(--text-muted)]">全局</span>
+                        <MiniToggle
+                          on={skill.enabled}
+                          disabled={!skill.can_toggle}
+                          title={skill.enabled ? "隐藏此 skill" : "启用此 skill"}
+                          onClick={() => toggleGlobalSkill(skill)}
+                        />
+                      </div>
+                    </div>
                   </div>
+
+                  {isOpen && (
+                    <div className="border-t border-[var(--border-subtle)] px-4 py-3">
+                      {skill.description && (
+                        <div className="mb-3 border-l-2 border-[var(--border-color)] pl-3 text-xs leading-relaxed text-[var(--text-secondary)]">
+                          {skill.description}
+                        </div>
+                      )}
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--text-muted)]">
+                        <span className="max-w-full truncate rounded-xl border border-[var(--border-color)] bg-[var(--bg-tertiary)] px-2 py-1" title={skill.path}>
+                          {skill.path}
+                        </span>
+                        <button
+                          onClick={() => openPath(skill.path)}
+                          className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-tertiary)] px-2 py-1 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                        >
+                          访达
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )
-          )}
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
