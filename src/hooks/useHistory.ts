@@ -15,11 +15,13 @@ export interface GroupedHistory {
 }
 
 const HISTORY_VISIBLE_MONTHS = 1;
+const HISTORY_REFRESH_INTERVAL_MS = 15_000;
 
 /** Parse a timestamp that may be an epoch-ms number string or an ISO date string. */
 function parseTimestamp(ts: string): number {
   const num = Number(ts);
   if (!isNaN(num) && num > 1e12) return num; // epoch milliseconds
+  if (!isNaN(num) && num > 1e9) return num * 1000; // epoch seconds
   const d = new Date(ts);
   return isNaN(d.getTime()) ? 0 : d.getTime();
 }
@@ -79,8 +81,10 @@ export function useHistory() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function fetchHistory() {
-    setLoading(true);
+  async function fetchHistory(silent = false) {
+    if (!silent) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const entries = await invoke<HistoryEntry[]>("get_history");
@@ -94,7 +98,23 @@ export function useHistory() {
 
   useEffect(() => {
     fetchHistory();
+
+    const intervalId = window.setInterval(() => fetchHistory(true), HISTORY_REFRESH_INTERVAL_MS);
+    const refreshWhenVisible = () => {
+      if (!document.hidden) {
+        fetchHistory(true);
+      }
+    };
+    const refreshOnFocus = () => fetchHistory(true);
+    window.addEventListener("focus", refreshOnFocus);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshOnFocus);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, []);
 
-  return { history, loading, error, refetch: fetchHistory };
+  return { history, loading, error, refetch: () => fetchHistory() };
 }

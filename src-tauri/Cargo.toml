@@ -1,6 +1,6 @@
 [package]
 name = "coding-desktop"
-version = "0.9.19"
+version = "0.9.20"
 description = "Coding Desktop GUI"
 authors = ["you"]
 edition = "2021"

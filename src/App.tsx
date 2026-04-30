@@ -343,14 +343,11 @@ function App() {
     setShowCodexUsage(false);
   }, []);
 
-  // 从历史记录恢复对话：创建新终端 tab 并带上 --resume 参数
+  // 从历史记录恢复对话：先创建待选择启动方式的 tab，真正启动时再带上 --resume 参数
   const handleResumeSession = useCallback((projectPath: string, sessionId: string, tool?: string | null) => {
     const tabId = `tab-${Date.now()}`;
     const dirName = projectPath.split("/").pop() || projectPath;
     const cliTool = normalizeCliTool(tool);
-    const permissionMode = cliTool === "codex" || cliTool === "codex_sub"
-      ? codexPermissionModes[cliTool]
-      : undefined;
     setTabs((prev) => [
       ...prev,
       {
@@ -358,21 +355,18 @@ function App() {
         label: `${dirName} (resumed)`,
         workingDir: projectPath,
         mode: "terminal",
-        yolo: permissionMode === "full_access",
         tool: cliTool,
-        permissionMode,
         resumeSessionId: sessionId,
-        status: "running",
+        status: "idle",
       },
     ]);
-    setTerminalActivated((prev) => new Set(prev).add(tabId));
     setActiveTabId(tabId);
     setWorkingDir(projectPath);
     setActiveSessionId(null);
     setActiveProject(null);
     setShowLaunchpad(false);
     setShowCodexUsage(false);
-  }, [codexPermissionModes]);
+  }, []);
 
   // 创建 git worktree 并打开为新 tab
   const handleCreateWorktree = useCallback(async (branch: string) => {

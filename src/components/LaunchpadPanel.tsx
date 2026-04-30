@@ -228,6 +228,28 @@ export default function LaunchpadPanel() {
   );
 
   useEffect(() => {
+    if (launchpadData.projects.length > 0) return;
+
+    let cancelled = false;
+
+    invoke<string | null>("get_legacy_local_storage_value", { key: LEGACY_STORAGE_KEY })
+      .then((raw) => {
+        if (cancelled || !raw) return;
+
+        const restoredData = normalizeLaunchpadData(JSON.parse(raw));
+        if (restoredData.projects.length === 0) return;
+
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(restoredData));
+        setLaunchpadData(restoredData);
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [launchpadData.projects.length]);
+
+  useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(launchpadData));
   }, [launchpadData]);
 

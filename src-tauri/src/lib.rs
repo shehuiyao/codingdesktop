@@ -14,6 +14,12 @@ use tauri::{Emitter, Manager, State};
 const APP_DATA_DIR: &str = ".coding-desktop";
 const LEGACY_APP_DATA_DIR: &str = ".claude-desktop";
 const FEEDBACK_REPO: &str = "shehuiyao/codingdesktop";
+const LEGACY_WEBKIT_BUNDLE_IDS: [&str; 2] = ["com.claude-desktop.app", "claude-desktop"];
+const LEGACY_LOCAL_STORAGE_KEYS: [&str; 3] = [
+    "claude-desktop-launchpad-projects",
+    "claude-desktop-pinned-projects",
+    "claude-desktop-codex-permission-modes",
+];
 
 #[derive(serde::Deserialize)]
 struct LaunchpadProjectProbe {
@@ -87,6 +93,85 @@ fn copy_dir_missing(from: &Path, to: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn find_local_storage_dbs(parent: &Path, result: &mut Vec<PathBuf>) -> Result<(), String> {
+    if !parent.exists() {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(parent)
+        .map_err(|e| format!("读取 WebKit 存储目录失败: {}", e))?
+    {
+        let entry = entry.map_err(|e| format!("读取 WebKit 存储项失败: {}", e))?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            find_local_storage_dbs(&path, result)?;
+        } else if path.file_name().and_then(|name| name.to_str()) == Some("localstorage.sqlite3") {
+            result.push(path);
+        }
+    }
+
+    Ok(())
+}
+
+fn decode_hex_utf16le(hex: &str) -> Option<String> {
+    let value = hex.trim();
+    if value.is_empty() || value.len() % 4 != 0 {
+        return None;
+    }
+
+    let mut units = Vec::with_capacity(value.len() / 4);
+    for chunk in value.as_bytes().chunks_exact(4) {
+        let text = std::str::from_utf8(chunk).ok()?;
+        let bytes = u16::from_str_radix(text, 16).ok()?;
+        units.push(u16::from_be(bytes));
+    }
+
+    String::from_utf16(&units).ok()
+}
+
+fn sql_string(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[tauri::command]
+fn get_legacy_local_storage_value(key: String) -> Result<Option<String>, String> {
+    if !LEGACY_LOCAL_STORAGE_KEYS.contains(&key.as_str()) {
+        return Err("不允许读取这个旧本地存储 key".to_string());
+    }
+
+    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+    let webkit_dir = home.join("Library").join("WebKit");
+    let mut dbs = Vec::new();
+
+    for bundle_id in LEGACY_WEBKIT_BUNDLE_IDS {
+        find_local_storage_dbs(&webkit_dir.join(bundle_id), &mut dbs)?;
+    }
+
+    for db in dbs {
+        let sql = format!(
+            "SELECT hex(value) FROM ItemTable WHERE key = {} LIMIT 1;",
+            sql_string(&key)
+        );
+        let output = Command::new("sqlite3")
+            .arg(&db)
+            .arg(sql)
+            .output()
+            .map_err(|e| format!("读取旧 WebKit 本地存储失败: {}", e))?;
+
+        if !output.status.success() {
+            continue;
+        }
+
+        let hex = String::from_utf8_lossy(&output.stdout);
+        if let Some(value) = decode_hex_utf16le(&hex) {
+            return Ok(Some(value));
+        }
+    }
+
+    Ok(None)
 }
 
 #[derive(serde::Serialize)]
@@ -1821,6 +1906,7 @@ pub fn run() {
             close_session,
             detect_running_launchpad_projects,
             stop_detected_launchpad_process,
+            get_legacy_local_storage_value,
             get_system_proxy,
             check_claude_installed,
             list_directory,
