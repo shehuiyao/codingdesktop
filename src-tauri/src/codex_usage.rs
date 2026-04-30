@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
-const CACHE_VERSION: u32 = 1;
+const CACHE_VERSION: u32 = 2;
 const CACHE_FILE_NAME: &str = "codex-usage-cache.json";
 static USAGE_CACHE: OnceLock<Mutex<CodexUsageCache>> = OnceLock::new();
 
@@ -52,6 +52,7 @@ pub struct CodexUsageItem {
 pub struct CodexSpeedItem {
     date: String,
     hour: u32,
+    timestamp: String,
     project: String,
     duration: f64,
 }
@@ -252,6 +253,7 @@ fn read_rollout(path: &Path) -> (Vec<CodexUsageItem>, Vec<CodexSpeedItem>) {
                         speed_items.push(CodexSpeedItem {
                             date: ts.format("%Y-%m-%d").to_string(),
                             hour: ts.hour(),
+                            timestamp: ts.to_rfc3339_opts(SecondsFormat::Secs, false),
                             project: project.clone(),
                             duration: (duration * 1000.0).round() / 1000.0,
                         });

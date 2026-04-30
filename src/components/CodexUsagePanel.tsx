@@ -19,6 +19,7 @@ interface CodexUsageItem {
 interface CodexSpeedItem {
   date: string;
   hour: number;
+  timestamp?: string;
   project: string;
   duration: number;
 }
@@ -142,7 +143,7 @@ function formatActivityDateTitle(value: string) {
   return parseDate(value).toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" });
 }
 
-function formatEventTime(item: CodexUsageItem) {
+function formatEventTime(item: { timestamp?: string; date: string; hour: number }) {
   const time = item.timestamp ? new Date(item.timestamp) : new Date(parseDate(item.date).getTime() + item.hour * 60 * 60 * 1000);
   if (Number.isNaN(time.getTime())) return `${item.date} ${String(item.hour).padStart(2, "0")}:00`;
   return time.toLocaleString("zh-CN", {
@@ -255,6 +256,12 @@ function makeLinePath(points: Bucket[], key: "total" | "output" | "avgDuration",
 }
 
 function itemTimeValue(item: CodexUsageItem) {
+  const parsed = item.timestamp ? new Date(item.timestamp).getTime() : NaN;
+  if (Number.isFinite(parsed)) return parsed;
+  return parseDate(item.date).getTime() + item.hour * 60 * 60 * 1000;
+}
+
+function speedTimeValue(item: CodexSpeedItem) {
   const parsed = item.timestamp ? new Date(item.timestamp).getTime() : NaN;
   if (Number.isFinite(parsed)) return parsed;
   return parseDate(item.date).getTime() + item.hour * 60 * 60 * 1000;
@@ -378,6 +385,99 @@ function ScatterUsageChart({
             <span>输入</span><span className="text-right text-[var(--text-primary)] tabular-nums">{formatTokens(hoverPoint.item.input)}</span>
             <span>缓存</span><span className="text-right text-[var(--text-primary)] tabular-nums">{formatTokens(hoverPoint.item.cached)}</span>
             <span>输出</span><span className="text-right text-[var(--text-primary)] tabular-nums">{formatTokens(hoverPoint.item.output)}</span>
+          </div>
+        </ChartTooltip>
+      )}
+    </div>
+  );
+}
+
+function ScatterSpeedChart({
+  items,
+  mode,
+  selectedDate,
+}: {
+  items: CodexSpeedItem[];
+  mode: ViewMode;
+  selectedDate: string;
+}) {
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const [start, end] = rangeTimeFor(mode, selectedDate);
+  const width = 700;
+  const height = 190;
+  const baseY = 232;
+  const max = Math.max(...items.map((item) => item.duration), 1);
+  const sortedItems = useMemo(() => [...items].sort((a, b) => speedTimeValue(a) - speedTimeValue(b)), [items]);
+  const points = sortedItems.map((item) => {
+    const time = speedTimeValue(item);
+    const progress = end > start ? (time - start) / (end - start) : 0;
+    return {
+      item,
+      x: 42 + Math.min(Math.max(progress, 0), 1) * width,
+      y: baseY - (item.duration / max) * height,
+    };
+  });
+  const hoverPoint = hoverIndex === null ? null : points[hoverIndex];
+  const guideLabels = mode === "day"
+    ? ["00:00", "06:00", "12:00", "18:00", "24:00"]
+    : Array.from({ length: Math.min(6, Math.max(2, points.length || 6)) }, (_, index) => {
+        const tick = new Date(start + ((end - start) * index) / (Math.min(6, Math.max(2, points.length || 6)) - 1));
+        return tick.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
+      });
+
+  return (
+    <div className="relative" onMouseLeave={() => setHoverIndex(null)}>
+      <svg viewBox="0 0 790 280" className="w-full min-h-[200px]">
+        <line x1="38" y1="232" x2="760" y2="232" stroke="var(--border-color)" />
+        {guideLabels.map((label, index) => {
+          const x = 42 + (index / Math.max(guideLabels.length - 1, 1)) * width;
+          return (
+            <g key={`${label}-${index}`}>
+              <line x1={x} y1="36" x2={x} y2="232" stroke="var(--border-subtle)" strokeDasharray="3 8" />
+              <text x={x} y="266" textAnchor="middle" fill="var(--text-muted)" fontSize="11">{label}</text>
+            </g>
+          );
+        })}
+        {hoverPoint && (
+          <>
+            <line x1={hoverPoint.x} y1="34" x2={hoverPoint.x} y2="232" stroke="var(--border-color)" strokeDasharray="4 4" />
+            <line x1="38" y1={hoverPoint.y} x2="760" y2={hoverPoint.y} stroke="var(--border-subtle)" strokeDasharray="4 6" />
+          </>
+        )}
+        {points.length === 0 ? (
+          <text x="400" y="138" textAnchor="middle" fill="var(--text-muted)" fontSize="12">没有可绘制的耗时事件</text>
+        ) : points.map((point, index) => {
+          const isHover = hoverIndex === index;
+          const radius = isHover ? 7 : Math.min(5.5, Math.max(3.2, 3 + (point.item.duration / max) * 3));
+          return (
+            <g key={`${point.item.timestamp ?? point.item.date}-${point.item.project}-${index}`}>
+              <circle
+                cx={point.x}
+                cy={point.y}
+                r="10"
+                fill="transparent"
+                onMouseEnter={() => setHoverIndex(index)}
+              />
+              <circle
+                cx={point.x}
+                cy={point.y}
+                r={radius}
+                fill={isHover ? "var(--accent-blue)" : "var(--bg-secondary)"}
+                stroke="var(--accent-blue)"
+                strokeWidth="2"
+                opacity={isHover ? 1 : 0.82}
+                onMouseEnter={() => setHoverIndex(index)}
+              />
+            </g>
+          );
+        })}
+      </svg>
+      {hoverPoint && (
+        <ChartTooltip x={hoverPoint.x} y={Math.max(52, hoverPoint.y)}>
+          <div className="mb-1 font-medium text-[var(--text-primary)]">{formatEventTime(hoverPoint.item)}</div>
+          <div className="grid grid-cols-[auto_auto] gap-x-4 gap-y-1">
+            <span>项目</span><span className="max-w-[140px] truncate text-right text-[var(--text-primary)]" title={hoverPoint.item.project}>{hoverPoint.item.project}</span>
+            <span>耗时</span><span className="text-right text-[var(--text-primary)] tabular-nums">{formatSeconds(hoverPoint.item.duration)}</span>
           </div>
         </ChartTooltip>
       )}
@@ -623,6 +723,7 @@ export default function CodexUsagePanel() {
   const [report, setReport] = useState<CodexUsageReport>(EMPTY_REPORT);
   const [mode, setMode] = useState<ViewMode>("day");
   const [chartMode, setChartMode] = useState<ChartMode>("line");
+  const [speedChartMode, setSpeedChartMode] = useState<ChartMode>("line");
   const [selectedDate, setSelectedDate] = useState(todayKey);
   const [selectedProject, setSelectedProject] = useState("all");
   const [loading, setLoading] = useState(false);
@@ -847,10 +948,39 @@ export default function CodexUsagePanel() {
         <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_0.9fr] gap-4">
           <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)]/92 p-4 min-w-0">
             <div className="flex items-center justify-between gap-3 mb-3">
-              <h2 className="text-sm font-medium text-[var(--text-primary)]">响应耗时</h2>
-              <span className="text-[11px] text-[var(--text-muted)]">越低越快</span>
+              <div className="min-w-0">
+                <h2 className="text-sm font-medium text-[var(--text-primary)]">{speedChartMode === "line" ? "响应耗时" : "耗时散点"}</h2>
+                <div className="mt-1 text-[11px] text-[var(--text-muted)]">
+                  {speedChartMode === "line" ? "按时间段看平均值" : "每个点是一轮可计算请求"}
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                {speedChartMode === "line" && (
+                  <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)]">
+                    <span className="h-2 w-5 rounded-full bg-[var(--accent-blue)]" />
+                    平均耗时
+                  </span>
+                )}
+                <div className="inline-flex rounded-xl border border-[var(--border-color)] overflow-hidden bg-[var(--bg-primary)]">
+                  {(["line", "scatter"] as ChartMode[]).map((item) => (
+                    <button
+                      key={item}
+                      onClick={() => setSpeedChartMode(item)}
+                      className={`h-8 px-3 text-xs cursor-pointer transition-colors ${
+                        speedChartMode === item ? "bg-[var(--accent-cyan)] text-[#0d1117]" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                      }`}
+                    >
+                      {item === "line" ? "折线" : "散点"}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
-            <SpeedChart points={buckets} />
+            {speedChartMode === "line" ? (
+              <SpeedChart points={buckets} />
+            ) : (
+              <ScatterSpeedChart items={filteredSpeed} mode={mode} selectedDate={selectedDate} />
+            )}
           </div>
 
           <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-secondary)]/92 p-4 min-w-0">
