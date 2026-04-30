@@ -53,6 +53,7 @@
 - `@tauri-apps/plugin-updater` 的 `check()` 支持传入 `proxy` 参数，这个代理会继续绑定到后续 `downloadAndInstall()` 使用。左下角更新应优先读取系统 HTTP/HTTPS 代理并显式传入；没有系统代理或代理失败时，再回退到 updater 默认通道。macOS 上先读 `scutil --proxy`，如果返回空，再用 `networksetup` 读取各网络服务代理。`http://127.0.0.1:7897` 只是本次排查示例，不要写死成唯一代理。
 - 2026-04-29 排查记录：`v0.9.17` 更新包约 `9.6MB`，直连 GitHub Release CDN 时 60 秒只下载约 `0.89MB`；强制 `curl -x http://127.0.0.1:7897` 后约 `6.43s` 下载完成。这个现象说明慢点在下载链路，不是包体突然变大，也不是 `latest.json` 或 Release 资产缺失。
 - 2026-04-29 发版记录：`v0.9.19` 更新包资产名被 GitHub 规范化为 `Coding.Desktop.app.tar.gz`，`latest.json` 必须写这个真实资产名，不能写本地构建文件名 `Coding Desktop.app.tar.gz`。本次包大小 `11,169,773 bytes`，SHA256 为 `cb05704cd5b0e989e581d3e082faf88042d7235ce90f5c140f04a01f639e9ebc`。直连下载约 `8.26s`，系统代理 `http://127.0.0.1:7897` 下载约 `8.08s`，两者哈希一致。
+- 2026-04-30 发版记录：`v0.9.20` 继续上传无空格资产名 `Coding.Desktop.app.tar.gz`、`Coding.Desktop_0.9.20_aarch64.dmg` 和 `latest.json`。本次更新包大小 `11,084,514 bytes`，SHA256 为 `c8a2b5f058a1b4f9893757e267bad19e001b67f0e18adc63fc5dcb54be8cee6d`；DMG SHA256 为 `1d02c28069fa57c274831d356bef1404446cbc6c4c0d7a3ab38dfcd29792715b`。`latest.json` 通过 `releases/latest/download/latest.json` 访问返回 `0.9.20`，直连更新包下载约 `8.43s`，系统代理 `http://127.0.0.1:7897` 下载约 `8.38s`，两者哈希一致。
 - 如果用户反馈“之前几秒就下好了，现在左下角很慢”，优先确认当前已安装 App 是否已经包含显式 updater proxy 逻辑；源码改完不等于已安装版本生效，需要重新构建或发小版本。
 
 ## 后续同步规则
