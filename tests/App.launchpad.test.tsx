@@ -28,7 +28,11 @@ vi.mock("@tauri-apps/plugin-updater", () => ({
 }));
 
 vi.mock("../src/components/Sidebar", () => ({
-  default: () => <div data-testid="sidebar" />,
+  default: ({ onSelectSession }: { onSelectSession: (projectSlug: string, sessionId: string) => void }) => (
+    <div data-testid="sidebar">
+      <button onClick={() => onSelectSession("mock-project", "mock-session-id")}>Mock Conversation</button>
+    </div>
+  ),
 }));
 
 vi.mock("../src/components/StatusBar", () => ({
@@ -86,6 +90,10 @@ vi.mock("../src/components/LaunchpadPanel", async () => {
 
 vi.mock("../src/components/LiveTerminal", () => ({
   default: () => <div data-testid="live-terminal" />,
+}));
+
+vi.mock("../src/components/ProjectBoardPanel", () => ({
+  default: () => <div data-testid="project-board-panel" />,
 }));
 
 vi.mock("../src/components/QuickActionsPanel", () => ({
@@ -153,5 +161,47 @@ describe("App Launchpad 面板", () => {
     fireEvent.click(screen.getByRole("button", { name: "Skills" }));
     expect(await screen.findByText("Project Launchpad")).toBeInTheDocument();
     expect(screen.getByTestId("launchpad-panel")).toBeInTheDocument();
+  });
+
+  it("切到对话再回 Launchpad，Launchpad 仍保持同一个后台实例", async () => {
+    render(<App />);
+    expect(await screen.findByTestId("launchpad-panel")).toBeInTheDocument();
+    expect(launchpadLifecycle.mounts).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Launchpad" }));
+    expect(await screen.findByText("Project Launchpad")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mock Conversation" }));
+    expect(await screen.findByText("session: mock-ses...")).toBeInTheDocument();
+    expect(launchpadLifecycle.unmounts).toBe(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Launchpad" }));
+    expect(await screen.findByText("Project Launchpad")).toBeInTheDocument();
+    expect(launchpadLifecycle.mounts).toBe(1);
+    expect(launchpadLifecycle.unmounts).toBe(0);
+  });
+
+  it("即使旧配置隐藏了 Status，也始终显示底部更新区域", async () => {
+    localStorage.setItem(
+      "coding-desktop-bottom-tool-visibility",
+      JSON.stringify({
+        status: false,
+        skills: true,
+        actions: true,
+        bugs: true,
+        commits: true,
+        files: true,
+        launchpad: true,
+        projectBoard: true,
+        apiUse: true,
+      }),
+    );
+
+    render(<App />);
+
+    expect(screen.getByTestId("status-bar")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.queryByText("Status")).not.toBeInTheDocument();
   });
 });

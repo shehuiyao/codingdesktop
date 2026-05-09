@@ -15,6 +15,7 @@ const CommitHistory = lazy(() => import("./components/CommitHistory"));
 const FileTree = lazy(() => import("./components/FileTree"));
 const LaunchpadPanel = lazy(() => import("./components/LaunchpadPanel"));
 const LiveTerminal = lazy(() => import("./components/LiveTerminal"));
+const ProjectBoardPanel = lazy(() => import("./components/ProjectBoardPanel"));
 const QuickActionsPanel = lazy(() => import("./components/QuickActionsPanel"));
 const SkillsPanel = lazy(() => import("./components/SkillsPanel"));
 
@@ -27,7 +28,7 @@ interface GitInfo {
 }
 
 type CodexTool = Extract<CliTool, "codex" | "codex_sub">;
-type BottomToolKey = "status" | "skills" | "actions" | "bugs" | "commits" | "files" | "launchpad" | "apiUse";
+type BottomToolKey = "status" | "skills" | "actions" | "bugs" | "commits" | "files" | "launchpad" | "projectBoard" | "apiUse";
 
 const CODEX_PERMISSION_KEY = "coding-desktop-codex-permission-modes";
 const LEGACY_CODEX_PERMISSION_KEY = "claude-desktop-codex-permission-modes";
@@ -44,16 +45,17 @@ const DEFAULT_BOTTOM_TOOL_VISIBILITY: Record<BottomToolKey, boolean> = {
   commits: true,
   files: true,
   launchpad: true,
+  projectBoard: true,
   apiUse: true,
 };
 const BOTTOM_TOOL_OPTIONS: { key: BottomToolKey; label: string; detail: string }[] = [
-  { key: "status", label: "Status", detail: "Version, updates, theme" },
   { key: "skills", label: "Skills", detail: "Skills dashboard" },
   { key: "actions", label: "Actions", detail: "Quick actions" },
   { key: "bugs", label: "Bugs", detail: "Bug tracker" },
   { key: "commits", label: "Commits", detail: "Commit history" },
   { key: "files", label: "Files", detail: "File tree" },
   { key: "launchpad", label: "Launchpad", detail: "Project launcher" },
+  { key: "projectBoard", label: "Project Board", detail: "Branch status board" },
   { key: "apiUse", label: "API Use", detail: "Codex usage" },
 ];
 
@@ -145,8 +147,8 @@ function App() {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [showLaunchpad, setShowLaunchpad] = useState(false);
+  const [showProjectBoard, setShowProjectBoard] = useState(false);
   const [showCodexUsage, setShowCodexUsage] = useState(false);
-  const [hasOpenedLaunchpad, setHasOpenedLaunchpad] = useState(false);
   const [showBottomToolSettings, setShowBottomToolSettings] = useState(false);
   const [bottomToolVisibility, setBottomToolVisibility] = useState<Record<BottomToolKey, boolean>>(loadBottomToolVisibility);
   const [moreModePickerTabId, setMoreModePickerTabId] = useState<string | null>(null);
@@ -191,6 +193,7 @@ function App() {
     if (!bottomToolVisibility.commits) setShowCommits(false);
     if (!bottomToolVisibility.files) setShowFileTree(false);
     if (!bottomToolVisibility.launchpad) setShowLaunchpad(false);
+    if (!bottomToolVisibility.projectBoard) setShowProjectBoard(false);
     if (!bottomToolVisibility.apiUse) setShowCodexUsage(false);
   }, [bottomToolVisibility]);
 
@@ -221,6 +224,7 @@ function App() {
       setActiveSessionId(null);
       setActiveProject(null);
       setShowLaunchpad(false);
+      setShowProjectBoard(false);
       setShowCodexUsage(false);
       setShowSkills(false);
     }
@@ -271,6 +275,7 @@ function App() {
     setActiveSessionId(null);
     setActiveProject(null);
     setShowLaunchpad(false);
+    setShowProjectBoard(false);
     setShowCodexUsage(false);
     setShowSkills(false);
     setTabs((prev) => {
@@ -418,6 +423,7 @@ function App() {
       setActiveSessionId(sessionId);
       setActiveTabId(null);
       setShowLaunchpad(false);
+      setShowProjectBoard(false);
       setShowCodexUsage(false);
       setShowSkills(false);
     },
@@ -437,6 +443,7 @@ function App() {
     setActiveSessionId(null);
     setActiveProject(null);
     setShowLaunchpad(false);
+    setShowProjectBoard(false);
     setShowCodexUsage(false);
     setShowSkills(false);
   }, []);
@@ -463,6 +470,7 @@ function App() {
     setActiveSessionId(null);
     setActiveProject(null);
     setShowLaunchpad(false);
+    setShowProjectBoard(false);
     setShowCodexUsage(false);
     setShowSkills(false);
   }, []);
@@ -483,6 +491,7 @@ function App() {
       setActiveSessionId(null);
       setActiveProject(null);
       setShowLaunchpad(false);
+      setShowProjectBoard(false);
       setShowCodexUsage(false);
       setShowSkills(false);
     } catch (e) {
@@ -493,15 +502,26 @@ function App() {
 
   const handleToggleLaunchpad = useCallback(() => {
     if (!bottomToolVisibilityRef.current.launchpad) return;
-    if (showLaunchpad && !showCodexUsage && !showSkills) {
-      setShowLaunchpad(false);
+    if (showLaunchpad && !showProjectBoard && !showCodexUsage && !showSkills) {
       return;
     }
-    setHasOpenedLaunchpad(true);
     setShowLaunchpad(true);
+    setShowProjectBoard(false);
     setShowCodexUsage(false);
     setShowSkills(false);
-  }, [showCodexUsage, showLaunchpad, showSkills]);
+  }, [showCodexUsage, showLaunchpad, showProjectBoard, showSkills]);
+
+  const handleToggleProjectBoard = useCallback(() => {
+    if (!bottomToolVisibilityRef.current.projectBoard) return;
+    if (showProjectBoard) {
+      setShowProjectBoard(false);
+      return;
+    }
+    setShowProjectBoard(true);
+    setShowLaunchpad(false);
+    setShowCodexUsage(false);
+    setShowSkills(false);
+  }, [showProjectBoard]);
 
   const handleToggleCodexUsage = useCallback(() => {
     if (!bottomToolVisibilityRef.current.apiUse) return;
@@ -530,6 +550,7 @@ function App() {
     if (key === "commits") setShowCommits(false);
     if (key === "files") setShowFileTree(false);
     if (key === "launchpad") setShowLaunchpad(false);
+    if (key === "projectBoard") setShowProjectBoard(false);
     if (key === "apiUse") setShowCodexUsage(false);
   }, []);
 
@@ -671,8 +692,9 @@ function App() {
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const showingTab = activeTabId !== null && activeTab !== undefined;
-  const isLaunchpadVisible = showLaunchpad && !showCodexUsage && !showSkills;
-  const isWorkspaceVisible = !showLaunchpad && !showCodexUsage && !showSkills;
+  const isLaunchpadVisible = showLaunchpad && !showProjectBoard && !showCodexUsage && !showSkills;
+  const isProjectBoardVisible = showProjectBoard && !showLaunchpad && !showCodexUsage && !showSkills;
+  const isWorkspaceVisible = !showLaunchpad && !showProjectBoard && !showCodexUsage && !showSkills;
 
   // Welcome screen when nothing is selected
   const showWelcome = isWorkspaceVisible && !showingTab && !activeSessionId;
@@ -706,6 +728,8 @@ function App() {
                 ? "Skills 使用看板"
                 : showCodexUsage
                 ? "Codex API Usage"
+                : showProjectBoard
+                ? "项目看板"
                 : showLaunchpad
                 ? "Project Launchpad"
                 : showingTab
@@ -759,14 +783,20 @@ function App() {
               onPointerMove={handleContentPointerMove}
               onPointerUp={handleContentPointerUp}
             >
-              {hasOpenedLaunchpad && (
-                <div
-                  className="absolute inset-0"
-                  style={{ display: isLaunchpadVisible ? "block" : "none" }}
-                  aria-hidden={!isLaunchpadVisible}
-                >
-                  <Suspense fallback={<PanelFallback label="Loading Launchpad..." />}>
-                    <LaunchpadPanel isPanelVisible={isLaunchpadVisible} />
+              <div
+                className="absolute inset-0"
+                style={{ display: isLaunchpadVisible ? "block" : "none" }}
+                aria-hidden={!isLaunchpadVisible}
+              >
+                <Suspense fallback={<PanelFallback label="Loading Launchpad..." />}>
+                  <LaunchpadPanel isPanelVisible={isLaunchpadVisible} />
+                </Suspense>
+              </div>
+
+              {isProjectBoardVisible && (
+                <div className="absolute inset-0">
+                  <Suspense fallback={<PanelFallback label="Loading project board..." />}>
+                    <ProjectBoardPanel onOpenProject={handleOpenProject} />
                   </Suspense>
                 </div>
               )}
@@ -925,7 +955,7 @@ function App() {
                 ))}
 
               {/* 分屏 drop zone 高亮 */}
-              {!showLaunchpad && tabDragging && showDropZone && (
+              {isWorkspaceVisible && tabDragging && showDropZone && (
                 <div className="absolute inset-y-0 right-0 w-1/2 z-20 bg-[var(--accent-cyan)]/10 border-2 border-dashed border-[var(--accent-cyan)] rounded-r-lg pointer-events-none flex items-center justify-center">
                   <span className="text-sm text-[var(--accent-cyan)] font-medium">Split Right</span>
                 </div>
@@ -973,7 +1003,7 @@ function App() {
                 })}
 
               {/* 分屏分隔线 */}
-              {!showLaunchpad && splitTabId && (
+              {isWorkspaceVisible && splitTabId && (
                 <div
                   className="absolute top-0 bottom-0 z-10"
                   style={{ left: `calc(${splitRatio * 100}% - 2px)` }}
@@ -983,7 +1013,7 @@ function App() {
               )}
 
               {/* 分屏关闭按钮 */}
-              {!showLaunchpad && splitTabId && (
+              {isWorkspaceVisible && splitTabId && (
                 <button
                   onClick={handleCloseSplit}
                   className="absolute top-1 z-10 w-5 h-5 flex items-center justify-center rounded text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors"
@@ -1072,12 +1102,8 @@ function App() {
           </div>
         </div>
       </div>
-      <div className="relative flex">
-        {bottomToolVisibility.status ? (
-          <StatusBar />
-        ) : (
-          <div className="flex-1 border-t border-[var(--border-subtle)] bg-[var(--bg-secondary)]" />
-        )}
+      <div className="relative flex min-h-[22px] shrink-0 overflow-hidden">
+        <StatusBar />
         {bottomToolVisibility.skills && (
           <button
             onClick={handleToggleSkills}
@@ -1139,6 +1165,17 @@ function App() {
             title="项目启动面板"
           >
             Launchpad
+          </button>
+        )}
+        {bottomToolVisibility.projectBoard && (
+          <button
+            onClick={handleToggleProjectBoard}
+            className={`px-3 py-0.5 text-[10px] border-t border-l border-[var(--border-subtle)] bg-[var(--bg-secondary)] cursor-pointer transition-colors duration-150 ${
+              showProjectBoard ? "text-[var(--accent-cyan)]" : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+            }`}
+            title="项目看板"
+          >
+            Project Board
           </button>
         )}
         {bottomToolVisibility.apiUse && (

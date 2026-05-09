@@ -836,6 +836,294 @@ struct GitInfo {
     deletions: i64,
 }
 
+#[derive(serde::Serialize)]
+struct ProjectBranchStatus {
+    name: String,
+    path: String,
+    branch: String,
+    dirty_files: usize,
+    staged_files: usize,
+    unstaged_files: usize,
+    untracked_files: usize,
+    additions: i64,
+    deletions: i64,
+    ahead: Option<i64>,
+    behind: Option<i64>,
+    has_upstream: bool,
+    last_commit_at: String,
+    last_commit_message: String,
+    status: String,
+    next_action: String,
+    error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct ProjectBranchScan {
+    root: String,
+    projects: Vec<ProjectBranchStatus>,
+}
+
+fn run_git(path: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()
+        .map_err(|e| format!("执行 git 失败: {}", e))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if stderr.is_empty() {
+            "git 命令执行失败".to_string()
+        } else {
+            stderr
+        })
+    }
+}
+
+fn is_git_worktree(path: &Path) -> bool {
+    run_git(path, &["rev-parse", "--is-inside-work-tree"])
+        .map(|value| value == "true")
+        .unwrap_or(false)
+}
+
+fn parse_numstat(output: &str) -> (i64, i64) {
+    let mut additions = 0;
+    let mut deletions = 0;
+
+    for line in output.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 2 {
+            if let Ok(value) = parts[0].parse::<i64>() {
+                additions += value;
+            }
+            if let Ok(value) = parts[1].parse::<i64>() {
+                deletions += value;
+            }
+        }
+    }
+
+    (additions, deletions)
+}
+
+fn build_project_next_action(
+    branch: &str,
+    dirty_files: usize,
+    ahead: Option<i64>,
+    behind: Option<i64>,
+    has_upstream: bool,
+) -> (String, String) {
+    if dirty_files > 0 {
+        return ("dirty".to_string(), "先整理本地改动并提交".to_string());
+    }
+
+    if behind.unwrap_or(0) > 0 {
+        return ("need_pull".to_string(), "先同步远端最新代码".to_string());
+    }
+
+    if ahead.unwrap_or(0) > 0 {
+        return (
+            "need_push".to_string(),
+            "可以推送远端或进入发布流程".to_string(),
+        );
+    }
+
+    if !has_upstream {
+        return (
+            "no_remote".to_string(),
+            "检查是否需要绑定远端分支".to_string(),
+        );
+    }
+
+    if branch == "main" || branch == "master" || branch == "develop" {
+        return (
+            "on_default".to_string(),
+            "如果要开发新功能，建议先建任务分支".to_string(),
+        );
+    }
+
+    (
+        "clean".to_string(),
+        "当前干净，可以继续开发或切换任务".to_string(),
+    )
+}
+
+fn read_project_branch_status(path: &Path) -> ProjectBranchStatus {
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("未命名项目")
+        .to_string();
+    let path_string = path.to_string_lossy().to_string();
+
+    let branch = match run_git(path, &["rev-parse", "--abbrev-ref", "HEAD"]) {
+        Ok(value) if value == "HEAD" => run_git(path, &["rev-parse", "--short", "HEAD"])
+            .map(|hash| format!("detached-{}", hash))
+            .unwrap_or_else(|_| "HEAD".to_string()),
+        Ok(value) => value,
+        Err(error) => {
+            return ProjectBranchStatus {
+                name,
+                path: path_string,
+                branch: "-".to_string(),
+                dirty_files: 0,
+                staged_files: 0,
+                unstaged_files: 0,
+                untracked_files: 0,
+                additions: 0,
+                deletions: 0,
+                ahead: None,
+                behind: None,
+                has_upstream: false,
+                last_commit_at: String::new(),
+                last_commit_message: String::new(),
+                status: "error".to_string(),
+                next_action: "无法读取 Git 状态".to_string(),
+                error: Some(error),
+            };
+        }
+    };
+
+    let status_text = run_git(path, &["status", "--porcelain"]).unwrap_or_default();
+    let mut staged_files = 0;
+    let mut unstaged_files = 0;
+    let mut untracked_files = 0;
+
+    for line in status_text.lines() {
+        let mut chars = line.chars();
+        let x = chars.next().unwrap_or(' ');
+        let y = chars.next().unwrap_or(' ');
+        if x == '?' && y == '?' {
+            untracked_files += 1;
+        } else {
+            if x != ' ' {
+                staged_files += 1;
+            }
+            if y != ' ' {
+                unstaged_files += 1;
+            }
+        }
+    }
+
+    let dirty_files = status_text.lines().count();
+    let (additions, deletions) = run_git(path, &["diff", "--numstat", "HEAD"])
+        .map(|output| parse_numstat(&output))
+        .unwrap_or((0, 0));
+
+    let upstream = run_git(
+        path,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    );
+    let has_upstream = upstream.is_ok();
+    let (behind, ahead) = if has_upstream {
+        run_git(
+            path,
+            &["rev-list", "--left-right", "--count", "@{u}...HEAD"],
+        )
+        .ok()
+        .and_then(|value| {
+            let mut parts = value.split_whitespace();
+            let behind = parts.next()?.parse::<i64>().ok()?;
+            let ahead = parts.next()?.parse::<i64>().ok()?;
+            Some((Some(behind), Some(ahead)))
+        })
+        .unwrap_or((None, None))
+    } else {
+        (None, None)
+    };
+
+    let last_commit = run_git(path, &["log", "-1", "--format=%ci%x1f%s"]).unwrap_or_default();
+    let mut last_parts = last_commit.splitn(2, '\u{1f}');
+    let last_commit_at = last_parts.next().unwrap_or("").to_string();
+    let last_commit_message = last_parts.next().unwrap_or("").to_string();
+    let (status, next_action) =
+        build_project_next_action(&branch, dirty_files, ahead, behind, has_upstream);
+
+    ProjectBranchStatus {
+        name,
+        path: path_string,
+        branch,
+        dirty_files,
+        staged_files,
+        unstaged_files,
+        untracked_files,
+        additions,
+        deletions,
+        ahead,
+        behind,
+        has_upstream,
+        last_commit_at,
+        last_commit_message,
+        status,
+        next_action,
+        error: None,
+    }
+}
+
+#[tauri::command]
+fn scan_project_branches(root: String) -> Result<ProjectBranchScan, String> {
+    let started = Instant::now();
+    let result = (|| {
+        let root_path = PathBuf::from(&root);
+        if !root_path.exists() || !root_path.is_dir() {
+            return Err("请选择一个存在的文件夹".to_string());
+        }
+
+        let mut project_paths = Vec::new();
+        if is_git_worktree(&root_path) {
+            project_paths.push(root_path.clone());
+        }
+
+        let entries =
+            std::fs::read_dir(&root_path).map_err(|e| format!("读取文件夹失败: {}", e))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("读取文件夹项目失败: {}", e))?;
+            let path = entry.path();
+            if path.is_dir() && is_git_worktree(&path) {
+                project_paths.push(path);
+            }
+        }
+
+        project_paths.sort();
+        project_paths.dedup();
+
+        let mut projects: Vec<ProjectBranchStatus> = project_paths
+            .iter()
+            .map(|path| read_project_branch_status(path))
+            .collect();
+
+        projects.sort_by(|a, b| {
+            let rank = |status: &str| match status {
+                "dirty" => 0,
+                "need_pull" => 1,
+                "need_push" => 2,
+                "no_remote" => 3,
+                "on_default" => 4,
+                "clean" => 5,
+                _ => 6,
+            };
+            rank(&a.status)
+                .cmp(&rank(&b.status))
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+
+        Ok(ProjectBranchScan { root, projects })
+    })();
+
+    let detail = result
+        .as_ref()
+        .map(|scan| format!("root={} projects={}", scan.root, scan.projects.len()))
+        .unwrap_or_default();
+    log_perf(
+        "scan_project_branches",
+        started,
+        if result.is_ok() { "ok" } else { "error" },
+        &detail,
+    );
+    result
+}
+
 #[tauri::command]
 fn get_git_info(path: String) -> Result<GitInfo, String> {
     use std::process::Command;
@@ -3065,6 +3353,7 @@ pub fn run() {
             get_global_disabled_skills,
             toggle_global_skill,
             get_git_info,
+            scan_project_branches,
             chat_send,
             chat_stop,
             chat_test,

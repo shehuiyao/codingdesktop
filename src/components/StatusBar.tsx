@@ -228,20 +228,20 @@ export default function StatusBar() {
   };
 
   return (
-    <div className="flex-1 border-t border-[var(--border-subtle)] bg-[var(--bg-secondary)] text-[var(--text-muted)] relative">
-      <div className="flex items-center justify-between px-3 py-0.5 text-[10px]">
-        <div className="flex items-center gap-3">
-          <span className="text-[var(--text-muted)]">v{APP_VERSION}</span>
+    <div className="relative min-w-0 flex-1 border-t border-[var(--border-subtle)] bg-[var(--bg-secondary)] text-[var(--text-muted)]">
+      <div className="flex min-w-0 items-center justify-between gap-3 px-3 py-0.5 text-[10px]">
+        <div className="flex min-w-0 items-center gap-3 overflow-hidden whitespace-nowrap">
+          <span className="shrink-0 text-[var(--text-muted)]">v{APP_VERSION}</span>
           <button
             onClick={handleCheckUpdate}
             disabled={updateStatus === "checking" || updateStatus === "downloading"}
-            className="text-[var(--text-muted)] hover:text-[var(--text-secondary)] cursor-pointer transition-colors duration-150 bg-transparent border-none p-0 text-[10px] disabled:opacity-50 disabled:cursor-default"
+            className="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-secondary)] cursor-pointer transition-colors duration-150 bg-transparent border-none p-0 text-[10px] disabled:opacity-50 disabled:cursor-default"
           >
             Check for Updates
           </button>
-          {renderUpdateContent()}
+          <span className="min-w-0 truncate">{renderUpdateContent()}</span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-3">
           {usageStats && (usageStats.today_messages > 0 || usageStats.today_sessions > 0) && (
             <span
               className="text-[var(--text-muted)]"
