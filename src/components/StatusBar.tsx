@@ -11,7 +11,7 @@ type SystemProxyConfig = {
   source: string;
 };
 
-const APP_VERSION = "0.9.28";
+const APP_VERSION = "0.9.29";
 const UPDATE_CHECK_TIMEOUT = 45000;
 const UPDATE_DOWNLOAD_TIMEOUT = 10 * 60 * 1000;
 
