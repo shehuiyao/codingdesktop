@@ -146,6 +146,7 @@ function App() {
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [showLaunchpad, setShowLaunchpad] = useState(false);
   const [showCodexUsage, setShowCodexUsage] = useState(false);
+  const [hasOpenedLaunchpad, setHasOpenedLaunchpad] = useState(false);
   const [showBottomToolSettings, setShowBottomToolSettings] = useState(false);
   const [bottomToolVisibility, setBottomToolVisibility] = useState<Record<BottomToolKey, boolean>>(loadBottomToolVisibility);
   const [moreModePickerTabId, setMoreModePickerTabId] = useState<string | null>(null);
@@ -492,39 +493,35 @@ function App() {
 
   const handleToggleLaunchpad = useCallback(() => {
     if (!bottomToolVisibilityRef.current.launchpad) return;
-    setShowLaunchpad((prev) => {
-      const next = !prev;
-      if (next) {
-        setShowCodexUsage(false);
-        setShowSkills(false);
-      }
-      return next;
-    });
-  }, []);
+    if (showLaunchpad && !showCodexUsage && !showSkills) {
+      setShowLaunchpad(false);
+      return;
+    }
+    setHasOpenedLaunchpad(true);
+    setShowLaunchpad(true);
+    setShowCodexUsage(false);
+    setShowSkills(false);
+  }, [showCodexUsage, showLaunchpad, showSkills]);
 
   const handleToggleCodexUsage = useCallback(() => {
     if (!bottomToolVisibilityRef.current.apiUse) return;
-    setShowCodexUsage((prev) => {
-      const next = !prev;
-      if (next) {
-        setShowLaunchpad(false);
-        setShowSkills(false);
-      }
-      return next;
-    });
-  }, []);
+    if (showCodexUsage) {
+      setShowCodexUsage(false);
+      return;
+    }
+    setShowCodexUsage(true);
+    setShowSkills(false);
+  }, [showCodexUsage]);
 
   const handleToggleSkills = useCallback(() => {
     if (!bottomToolVisibilityRef.current.skills) return;
-    setShowSkills((prev) => {
-      const next = !prev;
-      if (next) {
-        setShowLaunchpad(false);
-        setShowCodexUsage(false);
-      }
-      return next;
-    });
-  }, []);
+    if (showSkills) {
+      setShowSkills(false);
+      return;
+    }
+    setShowSkills(true);
+    setShowCodexUsage(false);
+  }, [showSkills]);
 
   const closeBottomToolPanel = useCallback((key: BottomToolKey) => {
     if (key === "skills") setShowSkills(false);
@@ -674,6 +671,7 @@ function App() {
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const showingTab = activeTabId !== null && activeTab !== undefined;
+  const isLaunchpadVisible = showLaunchpad && !showCodexUsage && !showSkills;
   const isWorkspaceVisible = !showLaunchpad && !showCodexUsage && !showSkills;
 
   // Welcome screen when nothing is selected
@@ -704,12 +702,12 @@ function App() {
               <span className="block w-3 h-[1.5px] bg-current rounded-full" />
             </button>
             <span className="text-xs text-[var(--text-secondary)] truncate">
-              {showLaunchpad
-                ? "Project Launchpad"
+              {showSkills
+                ? "Skills 使用看板"
                 : showCodexUsage
                 ? "Codex API Usage"
-                : showSkills
-                ? "Skills 使用看板"
+                : showLaunchpad
+                ? "Project Launchpad"
                 : showingTab
                 ? activeTab.workingDir
                 : activeSessionId
@@ -761,10 +759,14 @@ function App() {
               onPointerMove={handleContentPointerMove}
               onPointerUp={handleContentPointerUp}
             >
-              {showLaunchpad && (
-                <div className="absolute inset-0">
+              {hasOpenedLaunchpad && (
+                <div
+                  className="absolute inset-0"
+                  style={{ display: isLaunchpadVisible ? "block" : "none" }}
+                  aria-hidden={!isLaunchpadVisible}
+                >
                   <Suspense fallback={<PanelFallback label="Loading Launchpad..." />}>
-                    <LaunchpadPanel />
+                    <LaunchpadPanel isPanelVisible={isLaunchpadVisible} />
                   </Suspense>
                 </div>
               )}

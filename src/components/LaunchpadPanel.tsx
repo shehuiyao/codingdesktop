@@ -198,7 +198,11 @@ function statusClassName(status: ProjectRuntimeStatus) {
   }
 }
 
-export default function LaunchpadPanel() {
+interface LaunchpadPanelProps {
+  isPanelVisible?: boolean;
+}
+
+export default function LaunchpadPanel({ isPanelVisible = true }: LaunchpadPanelProps) {
   const [launchpadData, setLaunchpadData] = useState<LaunchpadData>(loadLaunchpadData);
   const [runtime, setRuntime] = useState<Record<string, ProjectRuntimeState>>({});
   const [detectedProjects, setDetectedProjects] = useState<DetectedRunningProject[]>([]);
@@ -833,7 +837,7 @@ export default function LaunchpadPanel() {
                             workingDir={project.workingDir}
                             startupCommand={project.startCommand}
                             sessionLabel={project.name || getProjectName(project.workingDir) || "Command"}
-                            isActive={isVisibleProject}
+                            isActive={isPanelVisible && isVisibleProject}
                             onSessionStarted={() => {
                               setProjectRuntime(project.id, (current) => ({
                                 ...current,
