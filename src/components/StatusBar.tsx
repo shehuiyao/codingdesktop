@@ -19,7 +19,7 @@ type RedisVerifyCode = {
   ttl_seconds: number;
 };
 
-const APP_VERSION = "0.9.29";
+const APP_VERSION = "0.9.30";
 const UPDATE_CHECK_TIMEOUT = 45000;
 const UPDATE_DOWNLOAD_TIMEOUT = 10 * 60 * 1000;
 const VERIFY_CODE_REFRESH_INTERVAL = 12000;
