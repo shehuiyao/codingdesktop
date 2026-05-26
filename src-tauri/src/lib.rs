@@ -2,6 +2,7 @@ mod chat_runner;
 mod codex_usage;
 mod history;
 mod message_runner;
+mod redis_verify;
 
 use chat_runner::ChatProcess;
 use message_runner::PtySession;
@@ -526,10 +527,6 @@ fn path_contains(parent: &str, child: &str) -> bool {
     !parent.is_empty() && (child == parent || child.starts_with(&format!("{}/", parent)))
 }
 
-fn paths_related(first: &str, second: &str) -> bool {
-    path_contains(first, second) || path_contains(second, first)
-}
-
 fn parse_port(address: &str) -> Option<String> {
     let last = address.rsplit(':').next()?.trim();
     if !last.is_empty() && last.chars().all(|item| item.is_ascii_digit()) {
@@ -612,7 +609,7 @@ fn detect_running_launchpad_projects(
             if project.working_dir.trim().is_empty() {
                 continue;
             }
-            if paths_related(&project.working_dir, cwd) {
+            if path_contains(&project.working_dir, cwd) {
                 matches.push(RunningLaunchpadProject {
                     project_id: project.id.clone(),
                     name: if project.name.trim().is_empty() {
@@ -649,6 +646,27 @@ fn stop_detected_launchpad_process(pid: u32) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod launchpad_runtime_tests {
+    use super::path_contains;
+
+    #[test]
+    fn path_contains_allows_process_inside_project_dir() {
+        assert!(path_contains(
+            "/Users/senguoyun/Desktop/sengo/pf-backend",
+            "/Users/senguoyun/Desktop/sengo/pf-backend/src"
+        ));
+    }
+
+    #[test]
+    fn path_contains_rejects_process_in_common_parent_dir() {
+        assert!(!path_contains(
+            "/Users/senguoyun/Desktop/sengo/pf-backend",
+            "/Users/senguoyun"
+        ));
+    }
 }
 
 // ---- Chat mode commands ----
@@ -3369,6 +3387,7 @@ pub fn run() {
             get_skill_usage,
             get_usage_stats,
             get_codex_usage,
+            redis_verify::get_redis_verify_codes,
             list_bugs,
             update_bug_status,
             update_bug_priority,

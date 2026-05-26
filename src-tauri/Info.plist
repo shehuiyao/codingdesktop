@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CSResourcesFileMapped</key>
+	<false/>
+	<key>LSRequiresCarbon</key>
+	<false/>
 	<key>NSDesktopFolderUsageDescription</key>
 	<string>Coding Desktop needs access to your Desktop folder to open and manage project files.</string>
 	<key>NSDocumentsFolderUsageDescription</key>
